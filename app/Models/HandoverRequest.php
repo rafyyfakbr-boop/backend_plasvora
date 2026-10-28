@@ -25,11 +25,11 @@ class HandoverRequest extends Model
     ];
 
     protected $casts = [
-        'requested_weight_kg'     => 'decimal:2',
-        'agreed_weight_kg'        => 'decimal:2',
-        'actual_weight_kg'        => 'decimal:2',
-        'approved_at'             => 'datetime',
-        'handed_over_at'          => 'datetime',
+        'requested_weight_kg' => 'decimal:2',
+        'agreed_weight_kg' => 'decimal:2',
+        'actual_weight_kg' => 'decimal:2',
+        'approved_at' => 'datetime',
+        'handed_over_at' => 'datetime',
         'utilization_confirmed_at' => 'datetime',
     ];
 
@@ -55,13 +55,20 @@ class HandoverRequest extends Model
     ];
 
     /**
+     * Status yang valid sebagai TARGET transisi (nilai tujuan pada PATCH status).
+     * Diturunkan dari union semua nilai dalam ALLOWED_TRANSITIONS.
+     * 'pending' tidak termasuk karena tidak ada transisi yang menuju ke sana.
+     */
+    public const TARGET_STATUSES = ['approved', 'rejected', 'cancelled', 'handed_over', 'utilization_confirmed'];
+
+    /**
      * Aturan transisi status yang diperbolehkan.
      * Format: 'dari_status' => ['status_yang_diperbolehkan', ...]
      */
     public const ALLOWED_TRANSITIONS = [
-        'pending'       => ['approved', 'rejected', 'cancelled'],
-        'approved'      => ['handed_over', 'cancelled'],
-        'handed_over'   => ['utilization_confirmed'],
+        'pending' => ['approved', 'rejected', 'cancelled'],
+        'approved' => ['handed_over', 'cancelled'],
+        'handed_over' => ['utilization_confirmed'],
     ];
 
     /**
@@ -70,6 +77,7 @@ class HandoverRequest extends Model
     public function canTransitionTo(string $newStatus): bool
     {
         $allowed = self::ALLOWED_TRANSITIONS[$this->status] ?? [];
+
         return in_array($newStatus, $allowed);
     }
 

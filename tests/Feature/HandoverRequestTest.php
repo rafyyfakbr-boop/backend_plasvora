@@ -27,44 +27,44 @@ class HandoverRequestTest extends TestCase
     /** @test */
     public function requester_can_submit_handover_request_for_available_listing(): void
     {
-        $owner     = User::factory()->create();
+        $owner = User::factory()->create();
         $requester = User::factory()->create();
-        $listing   = MaterialListing::factory()->create([
-            'owner_id'  => $owner->id,
-            'status'    => 'available',
+        $listing = MaterialListing::factory()->create([
+            'owner_id' => $owner->id,
+            'status' => 'available',
             'weight_kg' => 20,
         ]);
 
         $response = $this->actingAs($requester, 'sanctum')
             ->postJson('/api/handover-requests', [
-                'listing_id'          => $listing->id,
+                'listing_id' => $listing->id,
                 'requested_weight_kg' => 10,
-                'note'                => 'Untuk kerajinan ecobrick.',
+                'note' => 'Untuk kerajinan ecobrick.',
             ]);
 
         $response->assertStatus(201)->assertJson(['success' => true]);
 
         $this->assertDatabaseHas('handover_requests', [
-            'listing_id'   => $listing->id,
-            'owner_id'     => $owner->id,
+            'listing_id' => $listing->id,
+            'owner_id' => $owner->id,
             'requester_id' => $requester->id,
-            'status'       => 'pending',
+            'status' => 'pending',
         ]);
     }
 
     /** @test */
     public function cannot_request_handover_for_unavailable_listing(): void
     {
-        $owner     = User::factory()->create();
+        $owner = User::factory()->create();
         $requester = User::factory()->create();
-        $listing   = MaterialListing::factory()->create([
+        $listing = MaterialListing::factory()->create([
             'owner_id' => $owner->id,
-            'status'   => 'reserved', // Tidak available
+            'status' => 'reserved', // Tidak available
         ]);
 
         $response = $this->actingAs($requester, 'sanctum')
             ->postJson('/api/handover-requests', [
-                'listing_id'          => $listing->id,
+                'listing_id' => $listing->id,
                 'requested_weight_kg' => 5,
             ]);
 
@@ -74,16 +74,16 @@ class HandoverRequestTest extends TestCase
     /** @test */
     public function owner_cannot_request_their_own_listing(): void
     {
-        $owner   = User::factory()->create();
+        $owner = User::factory()->create();
         $listing = MaterialListing::factory()->create([
-            'owner_id'  => $owner->id,
-            'status'    => 'available',
+            'owner_id' => $owner->id,
+            'status' => 'available',
             'weight_kg' => 10,
         ]);
 
         $response = $this->actingAs($owner, 'sanctum')
             ->postJson('/api/handover-requests', [
-                'listing_id'          => $listing->id,
+                'listing_id' => $listing->id,
                 'requested_weight_kg' => 5,
             ]);
 
@@ -93,17 +93,17 @@ class HandoverRequestTest extends TestCase
     /** @test */
     public function requested_weight_cannot_exceed_available_weight(): void
     {
-        $owner     = User::factory()->create();
+        $owner = User::factory()->create();
         $requester = User::factory()->create();
-        $listing   = MaterialListing::factory()->create([
-            'owner_id'  => $owner->id,
-            'status'    => 'available',
+        $listing = MaterialListing::factory()->create([
+            'owner_id' => $owner->id,
+            'status' => 'available',
             'weight_kg' => 5,
         ]);
 
         $response = $this->actingAs($requester, 'sanctum')
             ->postJson('/api/handover-requests', [
-                'listing_id'          => $listing->id,
+                'listing_id' => $listing->id,
                 'requested_weight_kg' => 100, // Melebihi available weight
             ]);
 
@@ -115,15 +115,15 @@ class HandoverRequestTest extends TestCase
     /** @test */
     public function owner_can_approve_pending_handover(): void
     {
-        $owner     = User::factory()->create();
+        $owner = User::factory()->create();
         $requester = User::factory()->create();
-        $listing   = MaterialListing::factory()->create(['owner_id' => $owner->id, 'status' => 'available']);
-        $handover  = HandoverRequest::factory()->create([
-            'listing_id'          => $listing->id,
-            'owner_id'            => $owner->id,
-            'requester_id'        => $requester->id,
+        $listing = MaterialListing::factory()->create(['owner_id' => $owner->id, 'status' => 'available']);
+        $handover = HandoverRequest::factory()->create([
+            'listing_id' => $listing->id,
+            'owner_id' => $owner->id,
+            'requester_id' => $requester->id,
             'requested_weight_kg' => 10,
-            'status'              => 'pending',
+            'status' => 'pending',
         ]);
 
         $response = $this->actingAs($owner, 'sanctum')
@@ -134,11 +134,11 @@ class HandoverRequestTest extends TestCase
         $response->assertStatus(200)
             ->assertJson([
                 'success' => true,
-                'data'    => ['status' => 'approved'],
+                'data' => ['status' => 'approved'],
             ]);
 
         $this->assertDatabaseHas('handover_requests', [
-            'id'     => $handover->id,
+            'id' => $handover->id,
             'status' => 'approved',
         ]);
     }
@@ -146,14 +146,14 @@ class HandoverRequestTest extends TestCase
     /** @test */
     public function requester_cannot_approve_handover(): void
     {
-        $owner     = User::factory()->create();
+        $owner = User::factory()->create();
         $requester = User::factory()->create();
-        $listing   = MaterialListing::factory()->create(['owner_id' => $owner->id]);
-        $handover  = HandoverRequest::factory()->create([
-            'listing_id'   => $listing->id,
-            'owner_id'     => $owner->id,
+        $listing = MaterialListing::factory()->create(['owner_id' => $owner->id]);
+        $handover = HandoverRequest::factory()->create([
+            'listing_id' => $listing->id,
+            'owner_id' => $owner->id,
             'requester_id' => $requester->id,
-            'status'       => 'pending',
+            'status' => 'pending',
         ]);
 
         $response = $this->actingAs($requester, 'sanctum')
@@ -167,14 +167,14 @@ class HandoverRequestTest extends TestCase
     /** @test */
     public function illegal_status_transition_is_rejected(): void
     {
-        $owner     = User::factory()->create();
+        $owner = User::factory()->create();
         $requester = User::factory()->create();
-        $listing   = MaterialListing::factory()->create(['owner_id' => $owner->id, 'status' => 'available']);
-        $handover  = HandoverRequest::factory()->create([
-            'listing_id'   => $listing->id,
-            'owner_id'     => $owner->id,
+        $listing = MaterialListing::factory()->create(['owner_id' => $owner->id, 'status' => 'available']);
+        $handover = HandoverRequest::factory()->create([
+            'listing_id' => $listing->id,
+            'owner_id' => $owner->id,
             'requester_id' => $requester->id,
-            'status'       => 'pending',
+            'status' => 'pending',
         ]);
 
         // Tidak bisa langsung dari pending ke utilization_confirmed
@@ -187,25 +187,56 @@ class HandoverRequestTest extends TestCase
 
         // Status tidak berubah
         $this->assertDatabaseHas('handover_requests', [
-            'id'     => $handover->id,
+            'id' => $handover->id,
             'status' => 'pending',
+        ]);
+    }
+
+    /** @test */
+    public function status_update_rejects_pending_as_target_at_validation_layer(): void
+    {
+        $owner = User::factory()->create();
+        $requester = User::factory()->create();
+        $listing = MaterialListing::factory()->create(['owner_id' => $owner->id, 'status' => 'available']);
+        $handover = HandoverRequest::factory()->create([
+            'listing_id' => $listing->id,
+            'owner_id' => $owner->id,
+            'requester_id' => $requester->id,
+            'status' => 'approved',
+        ]);
+
+        // 'pending' bukan target status yang valid — harus ditolak oleh validasi (422)
+        // sebelum mencapai state machine di controller
+        $response = $this->actingAs($owner, 'sanctum')
+            ->patchJson("/api/handover-requests/{$handover->id}/status", [
+                'status' => 'pending',
+            ]);
+
+        $response->assertStatus(422)
+            ->assertJson(['success' => false])
+            ->assertJsonPath('errors.status.0', fn ($msg) => str_contains($msg, 'Status tidak valid'));
+
+        // Status tidak berubah
+        $this->assertDatabaseHas('handover_requests', [
+            'id' => $handover->id,
+            'status' => 'approved',
         ]);
     }
 
     /** @test */
     public function requester_can_confirm_utilization_after_handover(): void
     {
-        $owner     = User::factory()->create();
+        $owner = User::factory()->create();
         $requester = User::factory()->create();
-        $listing   = MaterialListing::factory()->create(['owner_id' => $owner->id, 'status' => 'reserved']);
-        $handover  = HandoverRequest::factory()->create([
-            'listing_id'      => $listing->id,
-            'owner_id'        => $owner->id,
-            'requester_id'    => $requester->id,
-            'status'          => 'handed_over',
+        $listing = MaterialListing::factory()->create(['owner_id' => $owner->id, 'status' => 'reserved']);
+        $handover = HandoverRequest::factory()->create([
+            'listing_id' => $listing->id,
+            'owner_id' => $owner->id,
+            'requester_id' => $requester->id,
+            'status' => 'handed_over',
             'actual_weight_kg' => 10,
-            'approved_at'     => now()->subDays(3),
-            'handed_over_at'  => now()->subDay(),
+            'approved_at' => now()->subDays(3),
+            'handed_over_at' => now()->subDay(),
         ]);
 
         $response = $this->actingAs($requester, 'sanctum')
@@ -216,7 +247,7 @@ class HandoverRequestTest extends TestCase
         $response->assertStatus(200)
             ->assertJson([
                 'success' => true,
-                'data'    => ['status' => 'utilization_confirmed'],
+                'data' => ['status' => 'utilization_confirmed'],
             ]);
     }
 
@@ -225,16 +256,16 @@ class HandoverRequestTest extends TestCase
     /** @test */
     public function user_only_sees_handovers_they_are_involved_in(): void
     {
-        $owner        = User::factory()->create();
-        $requester    = User::factory()->create();
-        $outsider     = User::factory()->create(); // Tidak terlibat
-        $listing      = MaterialListing::factory()->create(['owner_id' => $owner->id]);
+        $owner = User::factory()->create();
+        $requester = User::factory()->create();
+        $outsider = User::factory()->create(); // Tidak terlibat
+        $listing = MaterialListing::factory()->create(['owner_id' => $owner->id]);
 
         HandoverRequest::factory()->create([
-            'listing_id'   => $listing->id,
-            'owner_id'     => $owner->id,
+            'listing_id' => $listing->id,
+            'owner_id' => $owner->id,
             'requester_id' => $requester->id,
-            'status'       => 'pending',
+            'status' => 'pending',
         ]);
 
         // Outsider tidak boleh melihat handover ini
@@ -253,13 +284,13 @@ class HandoverRequestTest extends TestCase
     /** @test */
     public function outsider_cannot_view_handover_detail(): void
     {
-        $owner     = User::factory()->create();
+        $owner = User::factory()->create();
         $requester = User::factory()->create();
-        $outsider  = User::factory()->create();
-        $listing   = MaterialListing::factory()->create(['owner_id' => $owner->id]);
-        $handover  = HandoverRequest::factory()->create([
-            'listing_id'   => $listing->id,
-            'owner_id'     => $owner->id,
+        $outsider = User::factory()->create();
+        $listing = MaterialListing::factory()->create(['owner_id' => $owner->id]);
+        $handover = HandoverRequest::factory()->create([
+            'listing_id' => $listing->id,
+            'owner_id' => $owner->id,
             'requester_id' => $requester->id,
         ]);
 
