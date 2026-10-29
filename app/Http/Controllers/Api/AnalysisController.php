@@ -103,6 +103,34 @@ class AnalysisController extends Controller
                     $notes
                 );
 
+                // Periksa apakah objek atau material belum dapat dipastikan
+                if (($aiResult['status'] ?? '') === 'uncertain_material') {
+                    if ($imagePath && \Illuminate\Support\Facades\Storage::disk('public')->exists($imagePath)) {
+                        \Illuminate\Support\Facades\Storage::disk('public')->delete($imagePath);
+                    }
+
+                    return response()->json([
+                        'success' => false,
+                        'status'  => 'uncertain_material',
+                        'message' => $aiResult['message'] ?? 'Jenis material belum dapat dipastikan. Coba foto objek lebih dekat dengan pencahayaan yang lebih jelas.',
+                        'data'    => $aiResult,
+                    ], 422);
+                }
+
+                // Periksa apakah objek bukan sampah plastik
+                if (($aiResult['status'] ?? '') === 'unsupported_material' || empty($aiResult['is_plastic'])) {
+                    if ($imagePath && \Illuminate\Support\Facades\Storage::disk('public')->exists($imagePath)) {
+                        \Illuminate\Support\Facades\Storage::disk('public')->delete($imagePath);
+                    }
+
+                    return response()->json([
+                        'success' => false,
+                        'status'  => 'unsupported_material',
+                        'message' => $aiResult['message'] ?? 'Objek ini tampaknya bukan sampah plastik. Silakan foto sampah plastik untuk mendapatkan rekomendasi upcycling.',
+                        'data'    => $aiResult,
+                    ], 422);
+                }
+
                 $estimatedCategory = $aiResult['estimated_category'];
 
                 $analysis = AnalysisHistory::create([

@@ -156,6 +156,11 @@ class GeminiVisionAnalysisTest extends TestCase
                         'parts' => [
                             [
                                 'text' => json_encode([
+                                    'status'             => 'success',
+                                    'is_plastic'         => true,
+                                    'detected_object'    => 'Tutup botol plastik HDPE bulat',
+                                    'material_type'      => 'PLASTIC',
+                                    'message'            => 'Identifikasi sampah plastik berhasil.',
                                     'estimated_category' => 'HDPE',
                                     'material_title'     => 'Tutup Botol Minuman HDPE',
                                     'polymer_code'       => 'Tipe #2 (HDPE)',
@@ -167,10 +172,11 @@ class GeminiVisionAnalysisTest extends TestCase
                                             'id'          => 'idea_1',
                                             'title'       => 'Tatakan Gelas Komposit',
                                             'difficulty'  => 'Tingkat Mudah',
-                                            'description' => 'Dileburkan dan dicetak menjadi tatakan gelas warna-warni.',
-                                            'tools'       => 'Panggangan mini, cetakan silikon',
-                                            'steps'       => '1. Cacah kecil tutup botol. 2. Masukkan ke cetakan. 3. Panaskan pada suhu 140°C.',
-                                            'safety_notes'=> 'Gunakan sarung tangan anti panas dan masker.',
+                                            'description' => 'Disusun dan direkatkan menjadi tatakan gelas warna-warni.',
+                                            'why_it_fits' => 'Bentuk pipih dan bundar dari tutup botol sangat pas untuk alas cangkir.',
+                                            'tools'       => 'Lem serbaguna, gabus alas',
+                                            'steps'       => '1. Bersihkan tutup botol. 2. Susun melingkar. 3. Rekatkan pada alas gabus.',
+                                            'safety_notes'=> 'Gunakan lem di ruangan berventilasi cukup.',
                                         ],
                                     ],
                                 ]),
@@ -222,6 +228,190 @@ class GeminiVisionAnalysisTest extends TestCase
         $this->assertIsArray($history->recommendations);
         $this->assertEquals('Tutup Botol Minuman HDPE', $history->recommendations['material_title']);
         $this->assertEquals('Tipe #2 (HDPE)', $history->recommendations['polymer_code']);
+    }
+
+    /** @test */
+    public function analysis_handles_non_plastic_object_as_unsupported_material(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            [
+                                'text' => json_encode([
+                                    'status'             => 'unsupported_material',
+                                    'is_plastic'         => false,
+                                    'detected_object'    => 'Kaleng wafer biskuit logam',
+                                    'material_type'      => 'NON_PLASTIC',
+                                    'message'            => 'Objek ini tampaknya bukan sampah plastik. Silakan foto sampah plastik untuk mendapatkan rekomendasi upcycling.',
+                                    'estimated_category' => 'OTHER',
+                                    'material_title'     => 'Kaleng Logam Tinplate',
+                                    'polymer_code'       => '-',
+                                    'melting_point'      => '-',
+                                    'avoided_emission'   => '-',
+                                    'qualitative_note'   => 'Objek berbahan logam timah/baja, bukan polimer plastik.',
+                                    'ideas'              => [],
+                                ]),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('metal_can.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image' => $file,
+                'notes' => 'kaleng astor',
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+                'status'  => 'unsupported_material',
+                'message' => 'Objek ini tampaknya bukan sampah plastik. Silakan foto sampah plastik untuk mendapatkan rekomendasi upcycling.',
+            ]);
+
+        // Pastikan tidak ada riwayat yang disimpan di database
+        $this->assertDatabaseCount('analysis_histories', 0);
+    }
+
+    /** @test */
+    public function analysis_handles_uncertain_material_object(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            [
+                                'text' => json_encode([
+                                    'status'             => 'uncertain_material',
+                                    'is_plastic'         => false,
+                                    'detected_object'    => 'Objek buram tidak jelas',
+                                    'material_type'      => 'UNCERTAIN',
+                                    'message'            => 'Jenis material belum dapat dipastikan. Coba foto objek lebih dekat dengan pencahayaan yang lebih jelas.',
+                                    'estimated_category' => 'OTHER',
+                                    'material_title'     => 'Material Belum Pasti',
+                                    'polymer_code'       => '-',
+                                    'melting_point'      => '-',
+                                    'avoided_emission'   => '-',
+                                    'qualitative_note'   => 'Foto terlalu gelap dan jauh.',
+                                    'ideas'              => [],
+                                ]),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('blurry.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image' => $file,
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+                'status'  => 'uncertain_material',
+                'message' => 'Jenis material belum dapat dipastikan. Coba foto objek lebih dekat dengan pencahayaan yang lebih jelas.',
+            ]);
+
+        $this->assertDatabaseCount('analysis_histories', 0);
+    }
+
+    /** @test */
+    public function analysis_handles_recitation_filter_gracefully(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content'      => [],
+                    'finishReason' => 'RECITATION',
+                    'index'        => 0,
+                    'finishMessage'=> 'The generated content was filtered because it may contain material that resembles existing copyrighted works.',
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('branded_can.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image' => $file,
+                'notes' => 'kaleng astor',
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+            ]);
+
+        $this->assertStringContainsString('merek', $response->json('message'));
+        $this->assertDatabaseCount('analysis_histories', 0);
+    }
+
+    /** @test */
+    public function analysis_handles_safety_filter_gracefully(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content'      => [],
+                    'finishReason' => 'SAFETY',
+                    'index'        => 0,
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('unsafe.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image' => $file,
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(422)
+            ->assertJson([
+                'success' => false,
+            ]);
+
+        $this->assertStringContainsString('keselamatan', $response->json('message'));
+        $this->assertDatabaseCount('analysis_histories', 0);
     }
 
     /** @test */
