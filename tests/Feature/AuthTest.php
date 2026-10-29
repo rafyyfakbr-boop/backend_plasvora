@@ -26,9 +26,9 @@ class AuthTest extends TestCase
     public function user_can_register_with_valid_data(): void
     {
         $payload = [
-            'name'                  => 'Siswa RPL Plasvora',
-            'email'                 => 'siswa@plasvora.test',
-            'password'              => 'Rahasia123',
+            'name' => 'Siswa RPL Plasvora',
+            'email' => 'siswa@plasvora.test',
+            'password' => 'Rahasia123',
             'password_confirmation' => 'Rahasia123',
         ];
 
@@ -38,9 +38,9 @@ class AuthTest extends TestCase
             ->assertJson([
                 'success' => true,
                 'message' => 'Registration successful',
-                'data'    => [
+                'data' => [
                     'user' => [
-                        'name'  => 'Siswa RPL Plasvora',
+                        'name' => 'Siswa RPL Plasvora',
                         'email' => 'siswa@plasvora.test',
                     ],
                 ],
@@ -50,22 +50,57 @@ class AuthTest extends TestCase
         $this->assertArrayHasKey('token', $response->json('data'));
         $this->assertArrayNotHasKey('password', $response->json('data.user'));
 
-        // Pastikan password di database ter-hash
+        // Pastikan password di database ter-hash (bukan plaintext)
         $user = User::where('email', 'siswa@plasvora.test')->first();
         $this->assertNotNull($user);
+        $this->assertNotEquals('Rahasia123', $user->password);
         $this->assertTrue(Hash::check('Rahasia123', $user->password));
+    }
+
+    /** @test */
+    public function user_can_login_after_successful_registration(): void
+    {
+        $payload = [
+            'name' => 'Akun Baru Plasvora',
+            'email' => 'akunbaru@plasvora.test',
+            'password' => 'KataSandiKuat99',
+            'password_confirmation' => 'KataSandiKuat99',
+        ];
+
+        $registerResponse = $this->postJson('/api/register', $payload);
+        $registerResponse->assertStatus(201);
+
+        $loginResponse = $this->postJson('/api/login', [
+            'email' => 'akunbaru@plasvora.test',
+            'password' => 'KataSandiKuat99',
+        ]);
+
+        $loginResponse->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'message' => 'Login successful',
+                'data' => [
+                    'user' => [
+                        'email' => 'akunbaru@plasvora.test',
+                    ],
+                    'token_type' => 'Bearer',
+                ],
+            ]);
+
+        $this->assertArrayHasKey('token', $loginResponse->json('data'));
+        $this->assertArrayNotHasKey('password', $loginResponse->json('data.user'));
     }
 
     /** @test */
     public function user_can_login_with_correct_credentials(): void
     {
         $user = User::factory()->create([
-            'email'    => 'pelajar@plasvora.test',
+            'email' => 'pelajar@plasvora.test',
             'password' => Hash::make('password123'),
         ]);
 
         $response = $this->postJson('/api/login', [
-            'email'    => 'pelajar@plasvora.test',
+            'email' => 'pelajar@plasvora.test',
             'password' => 'password123',
         ]);
 
@@ -73,27 +108,28 @@ class AuthTest extends TestCase
             ->assertJson([
                 'success' => true,
                 'message' => 'Login successful',
-                'data'    => [
+                'data' => [
                     'user' => [
-                        'id'    => $user->id,
+                        'id' => $user->id,
                         'email' => 'pelajar@plasvora.test',
                     ],
                 ],
             ]);
 
         $this->assertArrayHasKey('token', $response->json('data'));
+        $this->assertArrayNotHasKey('password', $response->json('data.user'));
     }
 
     /** @test */
     public function login_fails_with_wrong_password(): void
     {
         User::factory()->create([
-            'email'    => 'pelajar@plasvora.test',
+            'email' => 'pelajar@plasvora.test',
             'password' => Hash::make('password123'),
         ]);
 
         $response = $this->postJson('/api/login', [
-            'email'    => 'pelajar@plasvora.test',
+            'email' => 'pelajar@plasvora.test',
             'password' => 'wrongpassword',
         ]);
 
@@ -115,9 +151,9 @@ class AuthTest extends TestCase
         $response->assertStatus(200)
             ->assertJson([
                 'success' => true,
-                'data'    => [
-                    'id'    => $user->id,
-                    'name'  => $user->name,
+                'data' => [
+                    'id' => $user->id,
+                    'name' => $user->name,
                     'email' => $user->email,
                 ],
             ]);
@@ -132,7 +168,7 @@ class AuthTest extends TestCase
         $user = User::factory()->create();
         $token = $user->createToken('test_token')->plainTextToken;
 
-        $response = $this->withHeader('Authorization', 'Bearer ' . $token)
+        $response = $this->withHeader('Authorization', 'Bearer '.$token)
             ->postJson('/api/logout');
 
         $response->assertStatus(200)
