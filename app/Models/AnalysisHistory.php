@@ -16,6 +16,7 @@ class AnalysisHistory extends Model
         'estimated_category',
         'weight_kg',
         'condition',
+        'notes',
         'input_image_path',
         'recommendations',
         'is_demo_result',

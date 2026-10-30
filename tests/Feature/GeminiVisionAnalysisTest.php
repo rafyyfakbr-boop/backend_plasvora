@@ -449,4 +449,480 @@ class GeminiVisionAnalysisTest extends TestCase
 
         $this->assertDatabaseCount('analysis_histories', 0);
     }
+
+    /** @test */
+    public function analysis_successfully_identifies_multi_component_bottle_and_cap(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            [
+                                'text' => json_encode([
+                                    'status'                 => 'success',
+                                    'is_plastic'             => true,
+                                    'object_name'            => 'Botol air mineral plastik',
+                                    'object_description'     => 'Botol plastik transparan bening dengan tutup ulir berwarna biru.',
+                                    'identification_summary' => 'Objek terdiri dari 2 komponen: badan botol (PET) dan tutup botol (HDPE/PP) sesuai catatan pengguna.',
+                                    'components'             => [
+                                        [
+                                            'id'                   => 'component_body',
+                                            'part_name'            => 'Badan botol',
+                                            'material_type'        => 'PET',
+                                            'resin_code'           => '#1',
+                                            'confidence'           => 'medium',
+                                            'identification_basis' => 'visual_estimate',
+                                            'candidate_materials'  => [],
+                                            'verification_note'    => 'Periksa simbol daur ulang segitiga angka 1 (PET) pada bagian bawah botol.',
+                                            'melting_point'        => '250° - 260° C',
+                                        ],
+                                        [
+                                            'id'                   => 'component_cap',
+                                            'part_name'            => 'Tutup botol',
+                                            'material_type'        => 'uncertain',
+                                            'resin_code'           => null,
+                                            'confidence'           => 'low',
+                                            'identification_basis' => 'visual_estimate',
+                                            'candidate_materials'  => ['HDPE (#2)', 'PP (#5)'],
+                                            'verification_note'    => 'Periksa kode daur ulang timbul pada bagian dalam tutup botol.',
+                                            'melting_point'        => '130° - 165° C',
+                                        ],
+                                    ],
+                                    'recommendations' => [
+                                        [
+                                            'id'                => 'idea_1',
+                                            'title'             => 'Pot Tanaman Mandiri & Hidroponik Sederhana',
+                                            'difficulty'        => 'Tingkat Mudah',
+                                            'description'       => 'Potong bagian atas botol dan balikkan sebagai wadah tanaman bersumbu.',
+                                            'component_ids'     => ['component_body'],
+                                            'why_it_fits'       => 'Bentuk silinder dan sifat kedap air botol PET sangat cocok untuk menampung air.',
+                                            'suitable_quantity' => 'single_item',
+                                            'scale'             => 'household',
+                                            'tools'             => 'Gunting/cutter, sumbu kain flanel',
+                                            'steps'             => '1. Potong botol menjadi 2 bagian. 2. Masukkan sumbu kain. 3. Isi media tanam.',
+                                            'safety_notes'      => 'Hati-hati saat memotong tepi botol plastik.',
+                                        ],
+                                        [
+                                            'id'                => 'idea_2',
+                                            'title'             => 'Aksesori Tatakan Gelas Mini',
+                                            'difficulty'        => 'Tingkat Mudah',
+                                            'description'       => 'Pemanfaatan tutup botol sebagai pengalas kaki meja atau kerajinan tangan sederhana.',
+                                            'component_ids'     => ['component_cap'],
+                                            'why_it_fits'       => 'Ketebalan dan kekuatan tutup botol HDPE/PP tahan tekanan.',
+                                            'suitable_quantity' => 'single_item',
+                                            'scale'             => 'household',
+                                            'tools'             => 'Perekat dua sisi atau lem serbaguna',
+                                            'steps'             => '1. Bersihkan tutup botol. 2. Pasang pada bagian bawah benda.',
+                                            'safety_notes'      => 'Gunakan lem secukupnya.',
+                                        ],
+                                    ],
+                                    'detected_object'    => 'Botol air mineral plastik',
+                                    'material_type'      => 'PLASTIC',
+                                    'message'            => 'Identifikasi sampah plastik berhasil.',
+                                    'estimated_category' => 'MIXED',
+                                    'material_title'     => 'Botol Air Mineral Plastik (Multi-komponen: PET, HDPE/PP)',
+                                    'polymer_code'       => 'Badan: Tipe #1 | Tutup: Tipe #2/#5',
+                                    'melting_point'      => 'Badan: 250°-260°C | Tutup: 130°-165°C',
+                                    'avoided_emission'   => '~2.0 kg CO₂/kg (Estimasi)',
+                                    'qualitative_note'   => 'Objek multi-komponen berhasil diidentifikasi terpisah.',
+                                ]),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('bottle_with_cap.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image'     => $file,
+                'weight_kg' => 0.05,
+                'condition' => 'clean',
+                'notes'     => 'botol dan tutup botol plastik',
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(201)
+            ->assertJson([
+                'success' => true,
+                'data'    => [
+                    'user_id' => $user->id,
+                    'notes'   => 'botol dan tutup botol plastik',
+                ],
+            ]);
+
+        $historyId = $response->json('data.id');
+        $history = AnalysisHistory::find($historyId);
+
+        $this->assertNotNull($history);
+        $this->assertEquals('botol dan tutup botol plastik', $history->notes);
+
+        $recs = $history->recommendations;
+        $this->assertArrayHasKey('components', $recs);
+        $this->assertCount(2, $recs['components']);
+
+        // Komponen 1: Badan botol
+        $this->assertEquals('component_body', $recs['components'][0]['id']);
+        $this->assertEquals('Badan botol', $recs['components'][0]['part_name']);
+        $this->assertEquals('PET', $recs['components'][0]['material_type']);
+        $this->assertEquals('#1', $recs['components'][0]['resin_code']);
+        $this->assertEquals('medium', $recs['components'][0]['confidence']);
+
+        // Komponen 2: Tutup botol
+        $this->assertEquals('component_cap', $recs['components'][1]['id']);
+        $this->assertEquals('Tutup botol', $recs['components'][1]['part_name']);
+        $this->assertEquals('uncertain', $recs['components'][1]['material_type']);
+        $this->assertContains('HDPE (#2)', $recs['components'][1]['candidate_materials']);
+        $this->assertContains('PP (#5)', $recs['components'][1]['candidate_materials']);
+
+        // Rekomendasi
+        $this->assertArrayHasKey('recommendations', $recs);
+        $this->assertCount(2, $recs['recommendations']);
+        $this->assertEquals(['component_body'], $recs['recommendations'][0]['component_ids']);
+        $this->assertEquals('single_item', $recs['recommendations'][0]['suitable_quantity']);
+        $this->assertEquals('household', $recs['recommendations'][0]['scale']);
+    }
+
+    /** @test */
+    public function analysis_identifies_cap_only_without_inventing_bottle_body(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            [
+                                'text' => json_encode([
+                                    'status'                 => 'success',
+                                    'is_plastic'             => true,
+                                    'object_name'            => 'Tutup botol plastik',
+                                    'object_description'     => 'Satu buah tutup botol plastik bundar berwarna merah.',
+                                    'identification_summary' => 'Hanya satu buah tutup botol yang tampak pada foto. Tidak terdapat badan botol.',
+                                    'components'             => [
+                                        [
+                                            'id'                   => 'component_cap',
+                                            'part_name'            => 'Tutup botol',
+                                            'material_type'        => 'uncertain',
+                                            'resin_code'           => null,
+                                            'confidence'           => 'low',
+                                            'identification_basis' => 'visual_estimate',
+                                            'candidate_materials'  => ['HDPE (#2)', 'PP (#5)'],
+                                            'verification_note'    => 'Periksa kode embos bagian dalam.',
+                                            'melting_point'        => '130° - 165° C',
+                                        ],
+                                    ],
+                                    'recommendations' => [
+                                        [
+                                            'id'                => 'idea_1',
+                                            'title'             => 'Pion Mainan Papan & Kerajinan',
+                                            'difficulty'        => 'Tingkat Mudah',
+                                            'description'       => 'Dapat dijadikan pion permainan atau penanda barang.',
+                                            'component_ids'     => ['component_cap'],
+                                            'suitable_quantity' => 'single_item',
+                                            'scale'             => 'household',
+                                        ],
+                                    ],
+                                ]),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('single_cap.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image' => $file,
+                'notes' => 'tutup botol plastik',
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(201);
+        $recs = $response->json('data.recommendations');
+
+        $this->assertCount(1, $recs['components']);
+        $this->assertEquals('Tutup botol', $recs['components'][0]['part_name']);
+        $this->assertStringNotContainsString('Badan botol', json_encode($recs['components']));
+    }
+
+    /** @test */
+    public function analysis_identifies_capless_bottle_body_without_inventing_cap(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            [
+                                'text' => json_encode([
+                                    'status'                 => 'success',
+                                    'is_plastic'             => true,
+                                    'object_name'            => 'Badan botol plastik tanpa tutup',
+                                    'object_description'     => 'Badan botol air mineral plastik bening dengan leher terbuka tanpa tutup.',
+                                    'identification_summary' => 'Badan botol terlihat tanpa penutup.',
+                                    'components'             => [
+                                        [
+                                            'id'                   => 'component_body',
+                                            'part_name'            => 'Badan botol',
+                                            'material_type'        => 'PET',
+                                            'resin_code'           => '#1',
+                                            'confidence'           => 'medium',
+                                            'identification_basis' => 'visual_estimate',
+                                            'candidate_materials'  => [],
+                                            'verification_note'    => 'Periksa simbol segitiga angka 1 di dasar botol.',
+                                            'melting_point'        => '250° - 260° C',
+                                        ],
+                                    ],
+                                    'recommendations' => [
+                                        [
+                                            'id'                => 'idea_1',
+                                            'title'             => 'Corong Tuang Praktis',
+                                            'difficulty'        => 'Tingkat Mudah',
+                                            'description'       => 'Potong bagian atas untuk dijadikan corong.',
+                                            'component_ids'     => ['component_body'],
+                                            'suitable_quantity' => 'single_item',
+                                            'scale'             => 'household',
+                                        ],
+                                    ],
+                                ]),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('bottle_no_cap.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image' => $file,
+                'notes' => 'botol plastik tanpa tutup',
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(201);
+        $recs = $response->json('data.recommendations');
+
+        $this->assertCount(1, $recs['components']);
+        $this->assertEquals('Badan botol', $recs['components'][0]['part_name']);
+        $this->assertStringNotContainsString('Tutup botol', json_encode($recs['components']));
+    }
+
+    /** @test */
+    public function analysis_identifies_bottle_with_label_components(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            [
+                                'text' => json_encode([
+                                    'status'                 => 'success',
+                                    'is_plastic'             => true,
+                                    'object_name'            => 'Botol plastik dengan label',
+                                    'object_description'     => 'Botol bening dengan label plastik tipis melingkar.',
+                                    'identification_summary' => 'Teridentifikasi badan botol dan label plastik terpisah.',
+                                    'components'             => [
+                                        [
+                                            'id'                   => 'component_body',
+                                            'part_name'            => 'Badan botol',
+                                            'material_type'        => 'PET',
+                                            'resin_code'           => '#1',
+                                            'confidence'           => 'medium',
+                                            'identification_basis' => 'visual_estimate',
+                                            'candidate_materials'  => [],
+                                            'verification_note'    => 'Periksa kode di bawah botol.',
+                                        ],
+                                        [
+                                            'id'                   => 'component_label',
+                                            'part_name'            => 'Label kemasan',
+                                            'material_type'        => 'uncertain',
+                                            'resin_code'           => null,
+                                            'confidence'           => 'low',
+                                            'identification_basis' => 'visual_estimate',
+                                            'candidate_materials'  => ['PP film', 'PVC film', 'PET film'],
+                                            'verification_note'    => 'Lepas label sebelum didaur ulang.',
+                                        ],
+                                    ],
+                                    'recommendations' => [
+                                        [
+                                            'id'                => 'idea_1',
+                                            'title'             => 'Wadah Penyimpanan Transparan',
+                                            'difficulty'        => 'Tingkat Mudah',
+                                            'description'       => 'Lepaskan label plastik dan bersihkan badan botol.',
+                                            'component_ids'     => ['component_body'],
+                                            'suitable_quantity' => 'single_item',
+                                            'scale'             => 'household',
+                                        ],
+                                    ],
+                                ]),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('bottle_with_label.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image' => $file,
+                'notes' => 'botol dengan label',
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(201);
+        $recs = $response->json('data.recommendations');
+
+        $this->assertCount(2, $recs['components']);
+        $this->assertEquals('Label kemasan', $recs['components'][1]['part_name']);
+        $this->assertEquals('uncertain', $recs['components'][1]['material_type']);
+    }
+
+    /** @test */
+    public function analysis_handles_conflicting_notes_and_photo_gracefully(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            [
+                                'text' => json_encode([
+                                    'status'                 => 'success',
+                                    'is_plastic'             => true,
+                                    'object_name'            => 'Tutup botol plastik',
+                                    'object_description'     => 'Hanya terlihat satu buah tutup botol plastik pada foto.',
+                                    'identification_summary' => 'Catatan pengguna menyebut "botol air mineral lengkap", namun visual foto hanya memperlihatkan tutup botol. Harap verifikasi objek Anda.',
+                                    'components'             => [
+                                        [
+                                            'id'                   => 'component_cap',
+                                            'part_name'            => 'Tutup botol',
+                                            'material_type'        => 'uncertain',
+                                            'resin_code'           => null,
+                                            'confidence'           => 'low',
+                                            'identification_basis' => 'visual_estimate',
+                                            'candidate_materials'  => ['HDPE (#2)', 'PP (#5)'],
+                                            'verification_note'    => 'Verifikasi bagian botol yang tidak tampak pada foto.',
+                                        ],
+                                    ],
+                                    'recommendations' => [
+                                        [
+                                            'id'                => 'idea_1',
+                                            'title'             => 'Pemanfaatan Tutup Botol',
+                                            'difficulty'        => 'Tingkat Mudah',
+                                            'description'       => 'Gunakan tutup botol untuk keperluan kerajinan.',
+                                            'component_ids'     => ['component_cap'],
+                                            'suitable_quantity' => 'single_item',
+                                            'scale'             => 'household',
+                                        ],
+                                    ],
+                                ]),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+        $file = $this->createDummyJpgFile('conflict_cap.jpg');
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image' => $file,
+                'notes' => 'botol air mineral lengkap',
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(201);
+        $recs = $response->json('data.recommendations');
+
+        // Tidak mengarang badan botol
+        $this->assertCount(1, $recs['components']);
+        $this->assertStringContainsString('Catatan pengguna', $recs['identification_summary']);
+    }
+
+    /** @test */
+    public function analysis_history_allows_reading_legacy_records_without_crashing(): void
+    {
+        $user = User::factory()->create();
+
+        // Data riwayat versi lama (tanpa struktur components modern)
+        $legacyAnalysis = AnalysisHistory::create([
+            'user_id'            => $user->id,
+            'declared_category'  => 'PET',
+            'estimated_category' => 'PET',
+            'weight_kg'          => 1.0,
+            'condition'          => 'clean',
+            'notes'              => null,
+            'input_image_path'   => null,
+            'recommendations'    => [
+                'material_title'   => 'Botol PET Lama',
+                'polymer_code'     => 'Tipe #1',
+                'melting_point'    => '250° - 260° C',
+                'avoided_emission' => '~2.1 kg CO₂/kg',
+                'qualitative_note' => 'Riwayat lama.',
+                'ideas'            => [
+                    [
+                        'id'          => 'idea_1',
+                        'title'       => 'Pot Tanaman',
+                        'difficulty'  => 'Tingkat Mudah',
+                        'description' => 'Ide versi lama.',
+                    ],
+                ],
+            ],
+            'is_demo_result'     => true,
+        ]);
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->getJson('/api/analyses');
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+            ]);
+
+        $items = $response->json('data');
+        $this->assertNotEmpty($items);
+        $this->assertEquals($legacyAnalysis->id, $items[0]['id']);
+        $this->assertEquals('Botol PET Lama', $items[0]['recommendations']['material_title']);
+    }
 }

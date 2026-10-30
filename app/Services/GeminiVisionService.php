@@ -76,151 +76,169 @@ class GeminiVisionService
         $imageSizeKb = (int) (strlen($imageBytes) / 1024);
 
         $systemInstruction = <<<TEXT
-Anda adalah Senior Environmental & Polymer Vision Analyst untuk Plasvora, platform pengelolaan dan upcycling sampah plastik.
-Tugas Anda adalah menganalisis gambar yang dikirimkan pengguna dengan cermat, objektif, dan realistis.
+Anda adalah Senior Environmental & Polymer Vision Analyst untuk Plasvora, platform pengelolaan dan upcycling sampah plastik sirkular.
+Tugas Anda adalah menganalisis gambar yang dikirimkan pengguna dengan cermat, objektif, berbasis sains polimer, dan realistis.
 
-ALUR ANALISIS 3 TAHAP:
+ALUR KERJA MULTI-KOMPONEN & CONTEXT-AWARE:
 
-TAHAP 1 — IDENTIFIKASI VISUAL OBJEK & CAKUPAN MATERIAL (PLASTIK ATAU BUKAN):
-1. Amati bentuk fisik geometris objek, rongga wadah, ketebalan dinding, keterbukaan wadah, leher/tutup, dan tekstur visual nyata.
-2. Tentukan kategori makro material (material_type):
-   - 'PLASTIC': Jika objek memiliki bukti visual yang jelas merupakan sampah plastik (contoh: gelas cup plastik bening, botol plastik minuman, wadah deterjen HDPE, kantong kresek LDPE, dsb.).
-   - 'NON_PLASTIC': Jika objek kemungkinan BUKAN plastik (contoh: kaleng biskuit/makanan/minuman berbahan logam atau baja tinplate/aluminium, botol/stoples kaca, kardus kemasan, kertas, kain, keramik).
-   - 'UNCERTAIN': Jika foto terlalu buram, gelap, objek terlalu jauh, tertutup, atau tidak dapat diidentifikasi dengan yakin.
-3. ATURAN HAK CIPTA & MEREK DAGANG:
-   - Dilarang keras mengutip teks slogan promosi, lirik, atau merek dagang berhak cipta dari label kemasan untuk menghindari filter keselamatan AI (RECITATION).
-   - Sebutkan objek HANYA berdasarkan deskripsi fisik netral (contoh: 'wadah silinder kaleng wafer logam', 'gelas cup plastik minuman dingin', 'botol plastik bening berulir').
-4. Catatan pengguna hanya berfungsi sebagai petunjuk konteks awal. JANGAN menganggapnya sebagai fakta pasti jika bertentangan dengan visual foto nyata.
+PENDEKATAN IDENTIFIKASI:
+Ubah pendekatan dari SATU OBJEK = SATU MATERIAL menjadi:
+SATU FOTO → IDENTIFIKASI OBJEK UTUH → PEMECAHAN KOMPONEN FISIK NYATA → IDENTIFIKASI MATERIAL SETIAP KOMPONEN SECARA TERPISAH.
+
+TAHAP 1 — IDENTIFIKASI VISUAL OBJEK UTUH & KOMPONEN:
+1. Objek Utama: Identifikasi nama objek utuh secara deskriptif netral (contoh: 'Botol air mineral plastik', 'Gelas cup minuman berpembungkus', 'Wadah jerigen detergen'). DILARANG mengutip merek dagang komersial (RECITATION filter).
+2. Pemecahan Komponen Fisik:
+   - Amati seluruh bagian objek yang BENAR-BENAR TERLIHAT pada gambar (misal: 'Badan botol', 'Tutup botol', 'Label kemasan', 'Sedotan').
+   - DILARANG mengarang komponen yang TIDAK TERLIHAT di foto. Contoh: jika foto hanya menampilkan tutup botol, HANYA kenali tutup botol sebagai satu-satunya komponen! Jangan mengarang badan botol yang tidak ada di foto. Jika foto hanya botol tanpa tutup, jangan buat komponen tutup!
+   - JANGAN menggabungkan komponen yang berbeda polimer menjadi satu material tunggal.
+3. Polimer Setiap Komponen:
+   - Badan botol air mineral bening: Dugaan utama PET (#1). Jika simbol kode resin tidak terbaca di foto, gunakan confidence = 'medium', basis = 'visual_estimate', verification_note = 'Periksa simbol daur ulang segitiga angka 1 (PET) pada dasar botol.'
+   - Tutup botol plastik kaku: Material kandidat HDPE (#2) atau PP (#5). JANGAN menetapkan salah satunya secara pasti jika kode fisik tidak terlihat! Gunakan material_type = 'uncertain', candidate_materials = ['HDPE (#2)', 'PP (#5)'], confidence = 'low', verification_note = 'Periksa kode embos pada bagian dalam tutup botol.'
+   - Label botol (jika terlihat): Kenali sebagai komponen terpisah jika terlihat jelas (biasanya plastik film PP, PVC, atau PET film tipis). Jika tidak yakin, tandai uncertain.
+4. Pemanfaatan Catatan Pengguna:
+   - Catatan pengguna adalah konteks pendukung untuk membedakan komponen (contoh: "botol dan tutup botol plastik" menandakan objek terdiri dari 2 bagian).
+   - Analisis foto dan catatan BERSAMA:
+     * Jika catatan pengguna dan visual foto konsisten, gunakan sebagai konteks penguat.
+     * Jika catatan menyebut komponen yang TIDAK ADA di foto (contoh: catatan "botol air mineral lengkap" tapi foto hanya tutup botol), JANGAN mengarang badan botol! Identifikasi hanya apa yang tampak di foto, catat ketidaksinkronan di identification_summary dan minta pengguna melakukan verifikasi.
 
 TAHAP 2 — PENENTUAN STATUS & KELAYAKAN:
-- Jika material_type == 'NON_PLASTIC':
-  * Set status = 'unsupported_material'
-  * Set is_plastic = false
-  * Set message = 'Objek ini tampaknya bukan sampah plastik. Silakan foto sampah plastik untuk mendapatkan rekomendasi upcycling.'
-  * Set estimated_category = 'OTHER'
-  * Set ideas = [] (array kosong, DILARANG memberikan rekomendasi daur ulang plastik untuk objek non-plastik).
-- Jika material_type == 'UNCERTAIN':
-  * Set status = 'uncertain_material'
-  * Set is_plastic = false
-  * Set message = 'Jenis material belum dapat dipastikan. Coba foto objek lebih dekat dengan pencahayaan yang lebih jelas.'
-  * Set estimated_category = 'OTHER'
-  * Set ideas = [] (array kosong).
+- Jika material_type == 'NON_PLASTIC' (logam, kaca, kardus, dsb.):
+  * status = 'unsupported_material', is_plastic = false, ideas = [], recommendations = []
+- Jika material_type == 'UNCERTAIN' (foto buram/gelap/tidak dapat diidentifikasi):
+  * status = 'uncertain_material', is_plastic = false, ideas = [], recommendations = []
 - Jika material_type == 'PLASTIC':
-  * Set status = 'success'
-  * Set is_plastic = true
-  * Set message = 'Identifikasi sampah plastik berhasil.'
-  * Perkirakan jenis polimer secara ilmiah dan realistis. Pilihan estimated_category HANYA salah satu dari: 'PET', 'HDPE', 'PP', 'LDPE', 'OTHER', atau 'MIXED'.
+  * status = 'success', is_plastic = true
 
-TAHAP 3 — REKOMENDASI UPCYCLING KHUSUS OBJEK (HANYA JIKA is_plastic == true):
-1. Hasilkan 1 sampai 4 ide upcycling yang SPESIFIK memanfaatkan bentuk fisik dan bagian objek dalam foto:
-   - Jika objek adalah GELAS CUP PLASTIK: manfaatkan rongga wadah terbuka dan bibir cup (contoh: pot mini tanaman sukulen berlubang drainase, wadah sortir alat tulis/klip meja, wadah pembibitan benih hidroponik). JANGAN merekomendasikan kerajinan leher botol untuk gelas cup!
-   - Jika objek adalah BOTOL PLASTIK: manfaatkan badan silinder, leher botol, atau tutup botol.
-   - Jika objek adalah TUTUP BOTOL: manfaatkan bentuk kancing pipih/ulir.
-2. KESELAMATAN & REALISME:
-   - DILARANG merekomendasikan proses pelelehan plastik di dalam oven dapur rumah atau pembakaran langsung tanpa fasilitas pengaman karena mengeluarkan asap toksik beracun.
-   - Utamakan metode mekanis praktis: pembersihan, pemotongan dengan gunting/cutter secara hati-hati, pembuatan lubang drainase, dan pengecatan/penghiasan.
-3. Setiap ide harus memuat:
-   - id: identifier unik (contoh: idea_1)
-   - title: judul kerajinan praktis
-   - difficulty: 'Tingkat Mudah', 'Tingkat Menengah', atau 'Tingkat Sulit'
-   - description: deskripsi singkat dan jelas
-   - why_it_fits: penjelasan mengapa bentuk fisik objek di foto cocok untuk ide ini
-   - tools: alat dan bahan pendukung yang mudah didapat
-   - steps: langkah-langkah pembuatan yang realistis
-   - safety_notes: catatan keselamatan kerja (contoh: hati-hati menggunakan pisau cutter saat memotong plastik kaku).
+TAHAP 3 — REKOMENDASI UPCYCLING REALISTIS & SESUAI KOMPONEN (MAKSIMAL 3 IDE TERBAIK):
+1. Keterikatan Komponen: Setiap rekomendasi WAJIB menyertakan 'component_ids' yang merujuk pada komponen mana yang dipakai (contoh: ['component_body'] untuk pot tanaman, ['component_cap'] untuk kerajinan tutup botol). JANGAN merekomendasikan ide tutup botol tapi dilabeli untuk badan botol!
+2. Pertimbangan Kuantitas (suitable_quantity):
+   - 'single_item': untuk 1 benda bekas saja (contoh: 1 botol menjadi pot tanaman sukulen mandiri, corong air, wadah alat tulis).
+   - 'small_batch': untuk kumpulan kecil beberapa buah (contoh: beberapa tutup botol untuk tatakan gelas/coaster, gantungan kunci).
+   - 'bulk': untuk material dalam jumlah besar yang membutuhkan pengumpulan massal.
+   REALISME: Jika pengguna hanya memiliki 1 botol, UTAMAKAN ide 'single_item' dan 'household'. DILARANG menampilkan furnitur daur ulang atau ubin komposit sebagai rekomendasi utama untuk 1 botol bekas!
+3. Skala Pengolahan (scale):
+   - 'household': skala rumah tangga / DIY mandiri dengan alat sederhana.
+   - 'community': skala komunitas / bank sampah.
+   - 'industrial': skala pabrik / industri yang butuh mesin peleburan.
+4. Keselamatan Kerja:
+   - DILARANG menyarankan pembakaran plastik atau pelelehan sendiri di oven dapur rumah karena mengeluarkan gas karsinogenik beracun.
+   - Sertakan alat (tools), langkah praktis (steps), dan catatan keselamatan (safety_notes).
 TEXT;
 
-        $promptText = "Analisis objek sampah pada gambar ini sesuai instruksi 3 tahap.";
+        $promptText = "Lakukan analisis menyeluruh terhadap sampah plastik pada gambar ini dengan pendekatan multi-komponen.";
         if ($declaredCategory) {
-            $promptText .= " Kategori awal yang dilaporkan pengguna: {$declaredCategory} (gunakan sebagai referensi pendukung visual).";
+            $promptText .= " Kategori awal yang dipilih pengguna: {$declaredCategory} (jadikan referensi pendukung visual).";
         }
         if ($notes) {
-            $promptText .= " Catatan tambahan pengguna: {$notes} (verifikasi terhadap bentuk fisik nyata).";
+            $promptText .= " Catatan tambahan pengguna: \"{$notes}\". Integrasikan catatan ini dengan bukti visual foto nyata. Bedakan komponen jika pengguna menyebutkan bagian-bagian fisik, namun jangan mengarang komponen yang tidak tampak pada gambar.";
         }
 
-        // Schema terstruktur OpenAPI (dengan key camelCase untuk raw REST wire format)
+        // Schema terstruktur OpenAPI untuk response Gemini
         $schema = [
             'type' => 'OBJECT',
             'properties' => [
                 'status' => [
                     'type' => 'STRING',
                     'enum' => ['success', 'unsupported_material', 'uncertain_material'],
-                    'description' => 'success jika sampah plastik teranalisis, unsupported_material jika objek bukan plastik, uncertain_material jika objek buram/tidak pasti.',
+                    'description' => 'success jika plastik teranalisis, unsupported_material jika bukan plastik, uncertain_material jika objek buram/tidak pasti.',
                 ],
                 'is_plastic' => [
                     'type' => 'BOOLEAN',
-                    'description' => 'True jika objek sampah plastik, False jika bukan plastik atau tidak pasti.',
+                    'description' => 'True jika sampah plastik, False jika bukan plastik atau tidak pasti.',
                 ],
-                'detected_object' => [
+                'object_name' => [
                     'type' => 'STRING',
-                    'description' => 'Deskripsi fisik netral objek yang terlihat tanpa mengutip merek komersial. Contoh: Gelas cup plastik bening, Wadah silinder kaleng logam, Botol minuman berulir.',
+                    'description' => 'Nama objek utuh yang teridentifikasi, contoh: Botol air mineral plastik, Gelas cup plastik bening, Tutup botol plastik.',
                 ],
-                'material_type' => [
+                'object_description' => [
                     'type' => 'STRING',
-                    'enum' => ['PLASTIC', 'NON_PLASTIC', 'UNCERTAIN'],
-                    'description' => 'Klasifikasi material makro: PLASTIC, NON_PLASTIC, atau UNCERTAIN.',
+                    'description' => 'Deskripsi fisik netral objek yang terlihat tanpa merek komersial.',
                 ],
-                'message' => [
+                'identification_summary' => [
                     'type' => 'STRING',
-                    'description' => 'Pesan hasil klasifikasi untuk pengguna.',
+                    'description' => 'Ringkasan identifikasi visual dan catatan kecocokan dengan input pengguna.',
                 ],
-                'estimated_category' => [
-                    'type' => 'STRING',
-                    'enum' => ['PET', 'HDPE', 'PP', 'LDPE', 'OTHER', 'MIXED'],
-                    'description' => 'Jenis polimer jika plastik (PET, HDPE, PP, LDPE, OTHER, MIXED). Jika bukan plastik, pilih OTHER.',
-                ],
-                'material_title' => [
-                    'type' => 'STRING',
-                    'description' => 'Nama judul deskriptif material, contoh: Gelas Plastik Bening Polipropilena (PP), atau Kaleng Logam Tinplate.',
-                ],
-                'polymer_code' => [
-                    'type' => 'STRING',
-                    'description' => 'Kode daur ulang plastik, contoh: Tipe #5 (PP). Beri tanda strip (-) jika bukan plastik.',
-                ],
-                'melting_point' => [
-                    'type' => 'STRING',
-                    'description' => 'Titik leleh material, contoh: 160° - 165° C. Beri tanda strip (-) jika bukan plastik.',
-                ],
-                'avoided_emission' => [
-                    'type' => 'STRING',
-                    'description' => 'Perkiraan emisi karbon yang dapat dicegah, contoh: ~1.7 kg CO₂/kg. Beri tanda strip (-) jika bukan plastik.',
-                ],
-                'qualitative_note' => [
-                    'type' => 'STRING',
-                    'description' => 'Deskripsi visual objek, bukti visual, tingkat keyakinan, dan anjuran verifikasi stempel daur ulang fisik.',
-                ],
-                'ideas' => [
+                'components' => [
                     'type' => 'ARRAY',
-                    'description' => 'Daftar 1 sampai 4 ide upcycling khusus objek ini. WAJIB KOSONG [] jika is_plastic=false.',
+                    'description' => 'Daftar komponen fisik yang benar-benar terlihat pada objek.',
                     'items' => [
                         'type' => 'OBJECT',
                         'properties' => [
-                            'id' => ['type' => 'STRING', 'description' => 'ID unik ide, contoh: idea_1.'],
-                            'title' => ['type' => 'STRING', 'description' => 'Judul ide kerajinan/upcycling.'],
-                            'difficulty' => ['type' => 'STRING', 'enum' => ['Tingkat Mudah', 'Tingkat Menengah', 'Tingkat Sulit']],
-                            'description' => ['type' => 'STRING', 'description' => 'Penjelasan ide upcycling.'],
-                            'why_it_fits' => ['type' => 'STRING', 'description' => 'Mengapa bentuk fisik objek cocok untuk ide ini.'],
-                            'tools' => ['type' => 'STRING', 'description' => 'Alat dan bahan yang dibutuhkan.'],
-                            'steps' => ['type' => 'STRING', 'description' => 'Langkah-langkah pembuatan praktis.'],
-                            'safety_notes' => ['type' => 'STRING', 'description' => 'Catatan keselamatan saat pengerjaan.'],
+                            'id' => ['type' => 'STRING', 'description' => 'ID komponen, misal: component_body, component_cap, component_label.'],
+                            'part_name' => ['type' => 'STRING', 'description' => 'Nama bagian fisik, misal: Badan botol, Tutup botol, Label plastik.'],
+                            'material_type' => ['type' => 'STRING', 'description' => 'Jenis polimer material (PET, HDPE, PP, LDPE, uncertain, MIXED, OTHER).'],
+                            'resin_code' => ['type' => 'STRING', 'description' => 'Kode resin daur ulang (misal: #1, #2, #5, atau strip - jika belum pasti).'],
+                            'confidence' => ['type' => 'STRING', 'enum' => ['high', 'medium', 'low', 'uncertain'], 'description' => 'Tingkat keyakinan identifikasi.'],
+                            'identification_basis' => ['type' => 'STRING', 'description' => 'Dasar identifikasi (visual_estimate, resin_code_visible, user_note_context, uncertain).'],
+                            'candidate_materials' => [
+                                'type' => 'ARRAY',
+                                'items' => ['type' => 'STRING'],
+                                'description' => 'Daftar polimer kandidat jika belum pasti, misal [\"HDPE (#2)\", \"PP (#5)\"].',
+                            ],
+                            'verification_note' => ['type' => 'STRING', 'description' => 'Petunjuk verifikasi fisik oleh pengguna (misal: periksa kode di bawah botol).'],
+                            'melting_point' => ['type' => 'STRING', 'description' => 'Titik leleh polimer komponen ini, misal: 250° - 260° C.'],
                         ],
-                        'required' => ['id', 'title', 'difficulty', 'description', 'why_it_fits', 'steps'],
+                        'required' => ['id', 'part_name', 'material_type', 'confidence', 'verification_note'],
+                    ],
+                ],
+                'recommendations' => [
+                    'type' => 'ARRAY',
+                    'description' => 'Daftar maksimal 3 rekomendasi upcycling yang relevan dan realistis sesuai komponen dan jumlah bahan.',
+                    'items' => [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'id' => ['type' => 'STRING', 'description' => 'ID ide, misal: idea_1.'],
+                            'title' => ['type' => 'STRING', 'description' => 'Judul ide pemanfaatan/upcycling.'],
+                            'difficulty' => ['type' => 'STRING', 'enum' => ['Tingkat Mudah', 'Tingkat Menengah', 'Tingkat Sulit']],
+                            'description' => ['type' => 'STRING', 'description' => 'Deskripsi ide.'],
+                            'component_ids' => [
+                                'type' => 'ARRAY',
+                                'items' => ['type' => 'STRING'],
+                                'description' => 'ID komponen yang digunakan ide ini, misal [\"component_body\"].',
+                            ],
+                            'why_it_fits' => ['type' => 'STRING', 'description' => 'Alasan ide cocok dengan komponen spesifik objek.'],
+                            'suitable_quantity' => ['type' => 'STRING', 'enum' => ['single_item', 'small_batch', 'bulk']],
+                            'scale' => ['type' => 'STRING', 'enum' => ['household', 'community', 'industrial']],
+                            'tools' => ['type' => 'STRING', 'description' => 'Alat dan bahan yang dibutuhkan.'],
+                            'steps' => ['type' => 'STRING', 'description' => 'Langkah pembuatan praktis.'],
+                            'safety_notes' => ['type' => 'STRING', 'description' => 'Catatan keselamatan kerja.'],
+                        ],
+                        'required' => ['id', 'title', 'difficulty', 'description', 'component_ids', 'suitable_quantity', 'scale'],
+                    ],
+                ],
+                // Field kompatibilitas backward untuk klien & pengujian lama
+                'detected_object' => ['type' => 'STRING', 'description' => 'Nama objek umum.'],
+                'material_type' => ['type' => 'STRING', 'enum' => ['PLASTIC', 'NON_PLASTIC', 'UNCERTAIN']],
+                'message' => ['type' => 'STRING'],
+                'estimated_category' => ['type' => 'STRING', 'enum' => ['PET', 'HDPE', 'PP', 'LDPE', 'OTHER', 'MIXED']],
+                'material_title' => ['type' => 'STRING'],
+                'polymer_code' => ['type' => 'STRING'],
+                'melting_point' => ['type' => 'STRING'],
+                'avoided_emission' => ['type' => 'STRING'],
+                'qualitative_note' => ['type' => 'STRING'],
+                'ideas' => [
+                    'type' => 'ARRAY',
+                    'items' => [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'id' => ['type' => 'STRING'],
+                            'title' => ['type' => 'STRING'],
+                            'difficulty' => ['type' => 'STRING', 'enum' => ['Tingkat Mudah', 'Tingkat Menengah', 'Tingkat Sulit']],
+                            'description' => ['type' => 'STRING'],
+                            'why_it_fits' => ['type' => 'STRING'],
+                            'tools' => ['type' => 'STRING'],
+                            'steps' => ['type' => 'STRING'],
+                            'safety_notes' => ['type' => 'STRING'],
+                        ],
+                        'required' => ['id', 'title', 'difficulty', 'description'],
                     ],
                 ],
             ],
             'required' => [
                 'status',
                 'is_plastic',
-                'detected_object',
                 'material_type',
                 'message',
-                'estimated_category',
-                'material_title',
-                'polymer_code',
-                'melting_point',
-                'avoided_emission',
-                'qualitative_note',
-                'ideas',
             ],
         ];
 
@@ -555,7 +573,72 @@ TEXT;
         // Kasus 3: Objek plastik valid
         $allowedCategories = ['PET', 'HDPE', 'PP', 'LDPE', 'OTHER', 'MIXED'];
 
-        $rawCat = strtoupper(trim((string) ($data['estimated_category'] ?? 'OTHER')));
+        $objectName = trim((string) ($data['object_name'] ?? $detectedObj));
+        if (empty($objectName) || $objectName === 'Objek Sampah') {
+            $objectName = $detectedObj ?: 'Sampah Plastik';
+        }
+        $objectDesc = trim((string) ($data['object_description'] ?? ''));
+        $identSummary = trim((string) ($data['identification_summary'] ?? ''));
+
+        // Normalisasi Komponen Material (Multi-Component)
+        $rawComponents = $data['components'] ?? [];
+        $normalizedComponents = [];
+
+        if (is_array($rawComponents) && !empty($rawComponents)) {
+            foreach ($rawComponents as $idx => $comp) {
+                if (!is_array($comp)) {
+                    continue;
+                }
+                $compId = trim((string) ($comp['id'] ?? 'component_' . ($idx + 1)));
+                $partName = trim((string) ($comp['part_name'] ?? 'Bagian ' . ($idx + 1)));
+                $matType = trim((string) ($comp['material_type'] ?? 'uncertain'));
+                $resinCode = isset($comp['resin_code']) ? trim((string) $comp['resin_code']) : null;
+                if ($resinCode === '' || $resinCode === '-' || strtolower((string)$resinCode) === 'null') {
+                    $resinCode = null;
+                }
+                $conf = strtolower(trim((string) ($comp['confidence'] ?? 'medium')));
+                if (!in_array($conf, ['high', 'medium', 'low', 'uncertain'], true)) {
+                    $conf = 'medium';
+                }
+                $basis = trim((string) ($comp['identification_basis'] ?? 'visual_estimate'));
+                $candidates = [];
+                if (isset($comp['candidate_materials']) && is_array($comp['candidate_materials'])) {
+                    foreach ($comp['candidate_materials'] as $c) {
+                        if (!empty($c)) {
+                            $candidates[] = trim((string) $c);
+                        }
+                    }
+                }
+                $verifNote = trim((string) ($comp['verification_note'] ?? 'Periksa kode daur ulang segitiga pada bagian ini.'));
+                $meltingPt = trim((string) ($comp['melting_point'] ?? ''));
+                if (empty($meltingPt)) {
+                    $meltingPt = $this->resolveDefaultMeltingPoint($matType);
+                }
+
+                $normalizedComponents[] = [
+                    'id'                   => $compId,
+                    'part_name'            => $partName,
+                    'material_type'        => $matType,
+                    'resin_code'           => $resinCode,
+                    'confidence'           => $conf,
+                    'identification_basis' => $basis,
+                    'candidate_materials'  => $candidates,
+                    'verification_note'    => $verifNote,
+                    'melting_point'        => $meltingPt,
+                ];
+            }
+        }
+
+        // Tentukan perkiraan kategori polimer makro
+        $rawCat = strtoupper(trim((string) ($data['estimated_category'] ?? '')));
+        if (empty($rawCat)) {
+            if (count($normalizedComponents) > 1) {
+                $rawCat = 'MIXED';
+            } elseif (count($normalizedComponents) === 1) {
+                $rawCat = strtoupper($normalizedComponents[0]['material_type']);
+            }
+        }
+
         $estimatedCategory = 'OTHER';
         if (in_array($rawCat, $allowedCategories, true)) {
             $estimatedCategory = $rawCat;
@@ -571,24 +654,51 @@ TEXT;
             $estimatedCategory = 'MIXED';
         }
 
+        // Jika komponen belum ada sama sekali, buat komponen default tunggal
+        if (empty($normalizedComponents)) {
+            $compMelting = trim((string) ($data['melting_point'] ?? $this->resolveDefaultMeltingPoint($estimatedCategory)));
+            $normalizedComponents[] = [
+                'id'                   => 'component_main',
+                'part_name'            => $detectedObj,
+                'material_type'        => $estimatedCategory,
+                'resin_code'           => trim((string) ($data['polymer_code'] ?? "#" . ($estimatedCategory === 'PET' ? '1' : ($estimatedCategory === 'HDPE' ? '2' : ($estimatedCategory === 'PP' ? '5' : '4'))))),
+                'confidence'           => 'medium',
+                'identification_basis' => 'visual_estimate',
+                'candidate_materials'  => [],
+                'verification_note'    => 'Periksa kode daur ulang segitiga angka pada fisik benda.',
+                'melting_point'        => $compMelting,
+            ];
+        }
+
         $materialTitle   = trim((string) ($data['material_title'] ?? "Material Plastik {$estimatedCategory}"));
         $polymerCode     = trim((string) ($data['polymer_code'] ?? "Tipe Polimer {$estimatedCategory}"));
         $meltingPoint    = trim((string) ($data['melting_point'] ?? '130° - 260° C'));
-        $avoidedEmission = trim((string) ($data['avoided_emission'] ?? '~1.8 kg CO₂/kg'));
-        $qualitativeNote = trim((string) ($data['qualitative_note'] ?? 'Hasil identifikasi visual objek plastik oleh Gemini AI.'));
+        $avoidedEmission = trim((string) ($data['avoided_emission'] ?? '~1.8 kg CO₂/kg (Estimasi)'));
+        if (!str_contains($avoidedEmission, 'Estimasi') && !str_contains($avoidedEmission, '-')) {
+            $avoidedEmission .= ' (Estimasi)';
+        }
+        $qualitativeNote = trim((string) ($data['qualitative_note'] ?? ($identSummary ?: 'Hasil identifikasi visual objek plastik oleh Gemini AI.')));
 
-        $rawIdeas = $data['ideas'] ?? [];
+        // Kumpulkan ID semua komponen yang valid
+        $allComponentIds = array_column($normalizedComponents, 'id');
+
+        // Normalisasi Rekomendasi Upcycling (maksimal 3)
+        $rawIdeas = $data['recommendations'] ?? $data['ideas'] ?? [];
         if (!is_array($rawIdeas) || empty($rawIdeas)) {
+            $primaryCompId = $allComponentIds[0] ?? 'component_main';
             $rawIdeas = [
                 [
-                    'id'          => 'idea_1',
-                    'title'       => 'Wadah Serbaguna & Pot Mini',
-                    'difficulty'  => 'Tingkat Mudah',
-                    'description' => 'Dapat dibersihkan dan dialihfungsikan secara langsung menjadi wadah penyimpanan atau pot tanaman.',
-                    'why_it_fits' => 'Bentuk fisik wadah yang berongga sangat cocok untuk menampung media tanam atau barang kecil.',
-                    'tools'       => 'Gunting, kuas, cat akrilik',
-                    'steps'       => '1. Bersihkan wadah plastik. 2. Buat lubang drainase jika untuk tanaman. 3. Hias bagian luar.',
-                    'safety_notes'=> 'Hati-hati saat membuat lubang atau memotong plastik.',
+                    'id'                => 'idea_1',
+                    'title'             => 'Wadah Serbaguna & Pot Mini',
+                    'difficulty'        => 'Tingkat Mudah',
+                    'description'       => 'Dapat dibersihkan dan dialihfungsikan secara langsung menjadi wadah penyimpanan atau pot tanaman.',
+                    'component_ids'     => [$primaryCompId],
+                    'why_it_fits'       => 'Bentuk fisik wadah yang berongga sangat cocok untuk menampung media tanam atau barang kecil.',
+                    'suitable_quantity' => 'single_item',
+                    'scale'             => 'household',
+                    'tools'             => 'Gunting, kuas, cat akrilik',
+                    'steps'             => '1. Bersihkan wadah plastik. 2. Buat lubang drainase jika untuk tanaman. 3. Hias bagian luar.',
+                    'safety_notes'      => 'Hati-hati saat membuat lubang atau memotong plastik kaku.',
                 ],
             ];
         }
@@ -598,37 +708,89 @@ TEXT;
             if (!is_array($idea)) {
                 continue;
             }
+            if (count($normalizedIdeas) >= 3) {
+                break; // Batasi maksimal 3 rekomendasi terbaik
+            }
+
             $difficulty = trim((string) ($idea['difficulty'] ?? 'Tingkat Menengah'));
             if (!str_contains($difficulty, 'Tingkat')) {
                 $difficulty = 'Tingkat ' . ucfirst($difficulty);
             }
 
+            $ideaCompIds = [];
+            if (isset($idea['component_ids']) && is_array($idea['component_ids'])) {
+                foreach ($idea['component_ids'] as $cid) {
+                    if (!empty($cid)) {
+                        $ideaCompIds[] = trim((string) $cid);
+                    }
+                }
+            }
+            if (empty($ideaCompIds)) {
+                $ideaCompIds = $allComponentIds;
+            }
+
+            $quantity = strtolower(trim((string) ($idea['suitable_quantity'] ?? 'single_item')));
+            if (!in_array($quantity, ['single_item', 'small_batch', 'bulk'], true)) {
+                $quantity = 'single_item';
+            }
+
+            $scale = strtolower(trim((string) ($idea['scale'] ?? 'household')));
+            if (!in_array($scale, ['household', 'community', 'industrial'], true)) {
+                $scale = 'household';
+            }
+
             $normalizedIdeas[] = [
-                'id'           => (string) ($idea['id'] ?? 'idea_' . ($index + 1)),
-                'title'        => (string) ($idea['title'] ?? 'Kerajinan Upcycling'),
-                'difficulty'   => $difficulty,
-                'description'  => (string) ($idea['description'] ?? 'Pemanfaatan ramah lingkungan berbasis bentuk objek.'),
-                'why_it_fits'  => isset($idea['why_it_fits']) ? (string) $idea['why_it_fits'] : null,
-                'tools'        => isset($idea['tools']) ? (string) $idea['tools'] : null,
-                'steps'        => isset($idea['steps']) ? (string) $idea['steps'] : null,
-                'safety_notes' => isset($idea['safety_notes']) ? (string) $idea['safety_notes'] : null,
+                'id'                => (string) ($idea['id'] ?? 'idea_' . ($index + 1)),
+                'title'             => (string) ($idea['title'] ?? 'Kerajinan Upcycling'),
+                'difficulty'        => $difficulty,
+                'description'       => (string) ($idea['description'] ?? 'Pemanfaatan ramah lingkungan berbasis bentuk objek.'),
+                'component_ids'     => $ideaCompIds,
+                'why_it_fits'       => isset($idea['why_it_fits']) ? (string) $idea['why_it_fits'] : null,
+                'suitable_quantity' => $quantity,
+                'scale'             => $scale,
+                'tools'             => isset($idea['tools']) ? (string) $idea['tools'] : null,
+                'steps'             => isset($idea['steps']) ? (string) $idea['steps'] : null,
+                'safety_notes'      => isset($idea['safety_notes']) ? (string) $idea['safety_notes'] : null,
             ];
         }
 
         return [
-            'status'             => 'success',
-            'is_plastic'         => true,
-            'detected_object'    => $detectedObj,
-            'material_type'      => 'PLASTIC',
-            'message'            => 'Identifikasi sampah plastik berhasil.',
-            'estimated_category' => $estimatedCategory,
-            'material_title'     => $materialTitle,
-            'polymer_code'       => $polymerCode,
-            'melting_point'      => $meltingPoint,
-            'avoided_emission'   => $avoidedEmission,
-            'qualitative_note'   => $qualitativeNote,
-            'ideas'              => $normalizedIdeas,
-            'is_ai_generated'    => true,
+            'status'                 => 'success',
+            'is_plastic'             => true,
+            'object_name'            => $objectName,
+            'object_description'     => $objectDesc ?: $objectName,
+            'identification_summary' => $identSummary ?: $qualitativeNote,
+            'components'             => $normalizedComponents,
+            'recommendations'        => $normalizedIdeas,
+            // Kompatibilitas backward
+            'detected_object'        => $detectedObj ?: $objectName,
+            'material_type'          => 'PLASTIC',
+            'message'                => 'Identifikasi sampah plastik berhasil.',
+            'estimated_category'     => $estimatedCategory,
+            'material_title'         => $materialTitle,
+            'polymer_code'           => $polymerCode,
+            'melting_point'          => $meltingPoint,
+            'avoided_emission'       => $avoidedEmission,
+            'qualitative_note'       => $qualitativeNote,
+            'ideas'                  => $normalizedIdeas,
+            'is_ai_generated'        => true,
         ];
+    }
+
+    /**
+     * Helper resolusi titik leleh default berbasis jenis polimer.
+     */
+    protected function resolveDefaultMeltingPoint(string $polymer): string
+    {
+        $p = strtoupper($polymer);
+        return match (true) {
+            str_contains($p, 'PET')  => '250° - 260° C',
+            str_contains($p, 'HDPE') => '130° - 145° C',
+            str_contains($p, 'PP')   => '160° - 170° C',
+            str_contains($p, 'LDPE') => '105° - 115° C',
+            str_contains($p, 'PVC')  => '100° - 260° C',
+            str_contains($p, 'PS')   => '210° - 249° C',
+            default                  => '130° - 165° C',
+        };
     }
 }
