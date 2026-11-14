@@ -45,6 +45,28 @@ class AnalysisController extends Controller
     }
 
     /**
+     * GET /api/analyses/{id}
+     * Ambil detail satu riwayat analisis milik pengguna.
+     */
+    public function show(int $id): JsonResponse
+    {
+        $analysis = AnalysisHistory::where('user_id', Auth::id())->find($id);
+
+        if (!$analysis) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Riwayat analisis tidak ditemukan.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Detail analisis berhasil diambil.',
+            'data'    => $analysis,
+        ]);
+    }
+
+    /**
      * POST /api/analyses
      * Menganalisis sampah plastik menggunakan Gemini AI Vision jika gambar tersedia,
      * atau fallback rekomendasi berbasis aturan jika hanya input parameter deklaratif.

@@ -194,4 +194,174 @@ class AuthTest extends TestCase
                 'message' => 'Unauthenticated. Please login first.',
             ]);
     }
+
+    /** @test */
+    public function login_rate_limiting_restricts_after_five_attempts_for_same_email_and_ip(): void
+    {
+        User::factory()->create([
+            'email' => 'limit_test@plasvora.test',
+            'password' => Hash::make('password123'),
+        ]);
+
+        // 5 percobaan pertama gagal menghasilkan 401
+        for ($i = 1; $i <= 5; $i++) {
+            $response = $this->postJson('/api/login', [
+                'email' => 'limit_test@plasvora.test',
+                'password' => 'wrongpassword',
+            ]);
+            $response->assertStatus(401);
+        }
+
+        // Percobaan ke-6 harus ditolak oleh RateLimiter dengan HTTP 429
+        $throttledResponse = $this->postJson('/api/login', [
+            'email' => 'limit_test@plasvora.test',
+            'password' => 'password123', // Kredensial benar sekalipun harus tetap diblokir
+        ]);
+
+        $throttledResponse->assertStatus(429)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Terlalu banyak permintaan. Silakan coba kembali beberapa saat lagi.',
+            ]);
+
+        $this->assertTrue($throttledResponse->headers->has('Retry-After'));
+    }
+
+    /** @test */
+    public function login_rate_limiting_normalizes_email_case_and_whitespace(): void
+    {
+        User::factory()->create([
+            'email' => 'normalize@plasvora.test',
+            'password' => Hash::make('password123'),
+        ]);
+
+        // 5 percobaan dengan variasi spasi dan huruf kapital
+        for ($i = 1; $i <= 5; $i++) {
+            $this->postJson('/api/login', [
+                'email' => '  NORMALIZE@plasvora.test  ',
+                'password' => 'wrongpassword',
+            ])->assertStatus(401);
+        }
+
+        // Percobaan ke-6 dengan email canonical tetap terkena limit
+        $this->postJson('/api/login', [
+            'email' => 'normalize@plasvora.test',
+            'password' => 'wrongpassword',
+        ])->assertStatus(429);
+    }
+
+    /** @test */
+    public function registration_rate_limiting_restricts_fourth_request_in_a_minute(): void
+    {
+        // 3 registrasi pertama berhasil (201)
+        for ($i = 1; $i <= 3; $i++) {
+            $this->postJson('/api/register', [
+                'name' => "User Reg {$i}",
+                'email' => "user_reg_{$i}@plasvora.test",
+                'password' => 'PasswordAman123',
+                'password_confirmation' => 'PasswordAman123',
+            ])->assertStatus(201);
+        }
+
+        // Permintaan ke-4 dalam menit yang sama harus diblokir (429)
+        $throttled = $this->postJson('/api/register', [
+            'name' => 'User Reg 4',
+            'email' => 'user_reg_4@plasvora.test',
+            'password' => 'PasswordAman123',
+            'password_confirmation' => 'PasswordAman123',
+        ]);
+
+        $throttled->assertStatus(429)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Terlalu banyak permintaan. Silakan coba kembali beberapa saat lagi.',
+            ]);
+
+        // Pastikan akun ke-4 TIDAK dibuat di database
+        $this->assertDatabaseMissing('users', [
+            'email' => 'user_reg_4@plasvora.test',
+        ]);
+    }
+
+    /** @test */
+    public function login_rate_limiting_restricts_sixty_first_attempt_per_ip(): void
+    {
+        // 60 percobaan login pertama dengan email berbeda dari IP yang sama
+        // Penggunaan email berbeda memastikan batas 5/menit per hash(email)+IP tidak terpicu
+        for ($i = 1; $i <= 60; $i++) {
+            $this->postJson('/api/login', [
+                'email' => "unique_ip_user_{$i}@plasvora.test",
+                'password' => 'wrongpassword',
+            ])->assertStatus(401);
+        }
+
+        // Percobaan ke-61 dari IP yang sama harus diblokir oleh limit 60/menit per IP (429)
+        $throttled = $this->postJson('/api/login', [
+            'email' => 'unique_ip_user_61@plasvora.test',
+            'password' => 'wrongpassword',
+        ]);
+
+        $throttled->assertStatus(429)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Terlalu banyak permintaan. Silakan coba kembali beberapa saat lagi.',
+            ]);
+
+        $this->assertTrue($throttled->headers->has('Retry-After'));
+    }
+
+    /** @test */
+    public function registration_rate_limiting_restricts_twenty_first_attempt_per_hour(): void
+    {
+        try {
+            // Lakukan 20 registrasi bertahap dengan memajukan waktu 65 detik tiap 3 request
+            // agar tidak terblokir oleh limit per menit (3/menit per IP) namun tetap dalam 1 jam yang sama
+            for ($batch = 0; $batch < 6; $batch++) {
+                for ($i = 1; $i <= 3; $i++) {
+                    $index = ($batch * 3) + $i;
+                    $this->postJson('/api/register', [
+                        'name' => "User Hourly {$index}",
+                        'email' => "hourly_user_{$index}@plasvora.test",
+                        'password' => 'PasswordAman123',
+                        'password_confirmation' => 'PasswordAman123',
+                    ])->assertStatus(201);
+                }
+                $this->travel(65)->seconds();
+            }
+
+            // 2 request tambahan untuk mencapai tepat 20 registrasi dalam 1 jam
+            for ($i = 19; $i <= 20; $i++) {
+                $this->postJson('/api/register', [
+                    'name' => "User Hourly {$i}",
+                    'email' => "hourly_user_{$i}@plasvora.test",
+                    'password' => 'PasswordAman123',
+                    'password_confirmation' => 'PasswordAman123',
+                ])->assertStatus(201);
+            }
+
+            // Permintaan ke-21 dalam 1 jam yang sama harus diblokir oleh limit 20/jam per IP (429)
+            $throttled = $this->postJson('/api/register', [
+                'name' => 'User Hourly 21',
+                'email' => 'hourly_user_21@plasvora.test',
+                'password' => 'PasswordAman123',
+                'password_confirmation' => 'PasswordAman123',
+            ]);
+
+            $throttled->assertStatus(429)
+                ->assertJson([
+                    'success' => false,
+                    'message' => 'Terlalu banyak permintaan. Silakan coba kembali beberapa saat lagi.',
+                ]);
+
+            // Pastikan akun ke-21 tidak dibuat di database
+            $this->assertDatabaseMissing('users', [
+                'email' => 'hourly_user_21@plasvora.test',
+            ]);
+
+            // Pastikan tepat 20 user batch ini yang tersimpan
+            $this->assertEquals(20, User::where('email', 'like', 'hourly_user_%')->count());
+        } finally {
+            $this->travelBack();
+        }
+    }
 }

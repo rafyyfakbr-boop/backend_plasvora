@@ -26,8 +26,13 @@ use Illuminate\Support\Facades\Route;
 // ═══════════════════════════════════════════════════════════════════════
 
 // ─── Autentikasi ────────────────────────────────────────────────────────
-Route::post('/register', [AuthController::class, 'register'])->name('auth.register');
-Route::post('/login', [AuthController::class, 'login'])->name('auth.login');
+Route::post('/register', [AuthController::class, 'register'])
+    ->middleware('throttle:register')
+    ->name('auth.register');
+
+Route::post('/login', [AuthController::class, 'login'])
+    ->middleware('throttle:login')
+    ->name('auth.login');
 
 // ─── Material Listings (read-only, publik) ─────────────────────────────
 Route::get('/materials', [MaterialController::class, 'index'])->name('materials.index');
@@ -78,5 +83,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ─── Analysis History ─────────────────────────────────────────────
     Route::get('/analyses', [AnalysisController::class, 'index'])->name('analyses.index');
-    Route::post('/analyses', [AnalysisController::class, 'store'])->name('analyses.store');
+    Route::get('/analyses/{id}', [AnalysisController::class, 'show'])->name('analyses.show');
+    Route::post('/analyses', [AnalysisController::class, 'store'])
+        ->middleware('throttle:analyses')
+        ->name('analyses.store');
 });

@@ -159,77 +159,99 @@ class HandoverRequestController extends Controller
 
     /**
      * PATCH /api/handover-requests/{id}/status
-     * Ubah status handover sesuai aturan transisi.
+     * Ubah status handover sesuai aturan transisi dengan perlindungan race condition (SEC-003).
      */
     public function updateStatus(UpdateHandoverStatusRequest $request, int $id): JsonResponse
     {
-        $handover = HandoverRequest::with(['listing'])->find($id);
+        return DB::transaction(function () use ($request, $id) {
+            $userId    = Auth::id();
+            $newStatus = $request->input('status');
 
-        if (! $handover) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Handover request not found',
-            ], 404);
-        }
+            // 1. Kunci dan baca record HandoverRequest terbaru (Prioritas Penguncian 1)
+            $handover = HandoverRequest::where('id', $id)->lockForUpdate()->first();
 
-        $userId    = Auth::id();
-        $newStatus = $request->input('status');
+            if (! $handover) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Handover request not found',
+                ], 404);
+            }
 
-        // ─── Pastikan user terlibat dalam handover ini ────────────────────────
-        $isOwner     = $handover->owner_id === $userId;
-        $isRequester = $handover->requester_id === $userId;
+            // 2. Kunci dan baca record MaterialListing terbaru (Prioritas Penguncian 2)
+            $listing = MaterialListing::where('id', $handover->listing_id)->lockForUpdate()->first();
 
-        if (! $isOwner && ! $isRequester) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are not involved in this handover request',
-            ], 403);
-        }
+            if (! $listing) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Material listing not found',
+                ], 404);
+            }
 
-        // ─── Validasi transisi status di server (State Machine) ───────────────
-        if (! $handover->canTransitionTo($newStatus)) {
-            return response()->json([
-                'success' => false,
-                'message' => "Cannot transition from '{$handover->status}' to '{$newStatus}'",
-                'allowed_transitions' => HandoverRequest::ALLOWED_TRANSITIONS[$handover->status] ?? [],
-            ], 422);
-        }
+            // ─── Pastikan user terlibat dalam handover ini ────────────────────────
+            $isOwner     = $handover->owner_id === $userId;
+            $isRequester = $handover->requester_id === $userId;
 
-        // ─── Validasi peran aktor untuk transisi yang diizinkan ───────────────
-        $authError = $this->checkTransitionAuthorization($handover, $newStatus, $userId);
-        if ($authError) {
-            return response()->json([
-                'success' => false,
-                'message' => $authError,
-            ], 403);
-        }
+            if (! $isOwner && ! $isRequester) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You are not involved in this handover request',
+                ], 403);
+            }
 
-        // ─── Jalankan perubahan status secara atomik ────────────────────────────
-        DB::transaction(function () use ($handover, $newStatus, $request) {
+            // ─── Validasi transisi status di server (State Machine) ───────────────
+            if (! $handover->canTransitionTo($newStatus)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Cannot transition from '{$handover->status}' to '{$newStatus}'",
+                    'allowed_transitions' => HandoverRequest::ALLOWED_TRANSITIONS[$handover->status] ?? [],
+                ], 422);
+            }
+
+            // ─── Validasi peran aktor untuk transisi yang diizinkan ───────────────
+            $authError = $this->checkTransitionAuthorization($handover, $newStatus, $userId);
+            if ($authError) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $authError,
+                ], 403);
+            }
+
+            // ─── SEC-003: Cegah persetujuan ganda terhadap material yang sama ─────
+            // Jika status baru adalah 'approved', pastikan material listing masih 'available'
+            if ($newStatus === 'approved') {
+                if ($listing->status !== 'available') {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Material listing is no longer available for handover',
+                    ], 409);
+                }
+            }
+
+            // ─── Jalankan pembaruan status secara atomik ──────────────────────────
             $updates = ['status' => $newStatus];
 
             if ($newStatus === 'approved') {
                 $updates['approved_at']      = now();
                 $updates['agreed_weight_kg'] = $request->input('agreed_weight_kg', $handover->requested_weight_kg);
                 // Listing menjadi reserved
-                $handover->listing->update(['status' => 'reserved']);
+                $listing->update(['status' => 'reserved']);
             }
 
             if ($newStatus === 'handed_over') {
-                $updates['handed_over_at']  = now();
+                $updates['handed_over_at']   = now();
                 $updates['actual_weight_kg'] = $request->input('actual_weight_kg', $handover->agreed_weight_kg);
             }
 
             if ($newStatus === 'utilization_confirmed') {
                 $updates['utilization_confirmed_at'] = now();
                 // Listing menjadi completed
-                $handover->listing->update(['status' => 'completed']);
+                $listing->update(['status' => 'completed']);
             }
 
             if ($newStatus === 'rejected' || $newStatus === 'cancelled') {
                 // Jika listing masih reserved karena handover ini, kembalikan ke available
-                if ($handover->status === 'approved' && $handover->listing->status === 'reserved') {
-                    $handover->listing->update(['status' => 'available']);
+                if ($handover->status === 'approved' && $listing->status === 'reserved') {
+                    $listing->update(['status' => 'available']);
                 }
             }
 
@@ -238,19 +260,19 @@ class HandoverRequestController extends Controller
             }
 
             $handover->update($updates);
+
+            $handover->refresh()->load([
+                'listing:id,name,category,status',
+                'owner:id,name',
+                'requester:id,name',
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Handover status updated to '{$newStatus}' successfully",
+                'data'    => $handover,
+            ]);
         });
-
-        $handover->refresh()->load([
-            'listing:id,name,category,status',
-            'owner:id,name',
-            'requester:id,name',
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => "Handover status updated to '{$newStatus}' successfully",
-            'data'    => $handover,
-        ]);
     }
 
     /**

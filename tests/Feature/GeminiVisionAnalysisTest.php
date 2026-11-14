@@ -925,4 +925,88 @@ class GeminiVisionAnalysisTest extends TestCase
         $this->assertEquals($legacyAnalysis->id, $items[0]['id']);
         $this->assertEquals('Botol PET Lama', $items[0]['recommendations']['material_title']);
     }
+
+    /** @test */
+    public function analysis_rate_limiting_prevents_gemini_api_call_and_storage_when_throttled(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $geminiResponsePayload = [
+            'candidates' => [
+                [
+                    'content' => [
+                        'parts' => [
+                            [
+                                'text' => json_encode([
+                                    'status'             => 'success',
+                                    'is_plastic'         => true,
+                                    'detected_object'    => 'Botol plastik',
+                                    'material_type'      => 'PLASTIC',
+                                    'message'            => 'Identifikasi berhasil.',
+                                    'estimated_category' => 'PET',
+                                    'material_title'     => 'Botol Plastik PET',
+                                    'polymer_code'       => 'Tipe #1 (PET)',
+                                    'melting_point'      => '250° - 260° C',
+                                    'avoided_emission'   => '~2.1 kg CO₂/kg',
+                                    'qualitative_note'   => 'Material PET.',
+                                    'ideas'              => [],
+                                ]),
+                            ],
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => Http::response($geminiResponsePayload, 200),
+        ]);
+
+        $user = User::factory()->create();
+
+        // 3 analisis pertama dengan upload gambar berhasil dalam menit yang sama
+        for ($i = 1; $i <= 3; $i++) {
+            $file = $this->createDummyJpgFile("rate_test_{$i}.jpg");
+            $this->actingAs($user, 'sanctum')
+                ->post('/api/analyses', [
+                    'image'             => $file,
+                    'weight_kg'         => 1.0,
+                    'condition'         => 'clean',
+                    'declared_category' => 'PET',
+                ], ['Accept' => 'application/json'])
+                ->assertStatus(201);
+        }
+
+        // Verifikasi 3 request memanggil Gemini API dan menyimpan 3 gambar
+        Http::assertSentCount(3);
+        $filesBeforeThrottling = Storage::disk('public')->allFiles('analyses');
+        $this->assertCount(3, $filesBeforeThrottling);
+        $this->assertEquals(3, AnalysisHistory::where('user_id', $user->id)->count());
+
+        // Permintaan ke-4 dalam menit yang sama ditolak oleh rate limiting middleware (429)
+        $fourthFile = $this->createDummyJpgFile('rate_test_fourth.jpg');
+        $throttled = $this->actingAs($user, 'sanctum')
+            ->post('/api/analyses', [
+                'image'             => $fourthFile,
+                'weight_kg'         => 1.0,
+                'condition'         => 'clean',
+                'declared_category' => 'PET',
+            ], ['Accept' => 'application/json']);
+
+        $throttled->assertStatus(429)
+            ->assertJson([
+                'success' => false,
+                'message' => 'Terlalu banyak permintaan. Silakan coba kembali beberapa saat lagi.',
+            ]);
+
+        // Verifikasi penting: Gemini API TIDAK dipanggil untuk request ke-4 (tetap 3)
+        Http::assertSentCount(3);
+
+        // Verifikasi penting: Gambar request ke-4 TIDAK disimpan ke disk storage (tetap 3)
+        $filesAfterThrottling = Storage::disk('public')->allFiles('analyses');
+        $this->assertCount(3, $filesAfterThrottling);
+
+        // Verifikasi database tidak menambah record ke-4
+        $this->assertEquals(3, AnalysisHistory::where('user_id', $user->id)->count());
+    }
 }

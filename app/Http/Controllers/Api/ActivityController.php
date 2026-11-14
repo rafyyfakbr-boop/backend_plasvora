@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\AnalysisHistory;
 use App\Models\HandoverRequest;
 use App\Models\MaterialListing;
 use App\Models\MaterialRequest;
@@ -105,6 +106,28 @@ class ActivityController extends Controller
                 'status'      => $handover->status,
                 'reference_id' => $handover->id,
                 'timestamp'   => $handover->updated_at,
+            ]);
+        }
+
+        // ─── Plastic Analyses ──────────────────────────────────────────────────
+        $analyses = AnalysisHistory::where('user_id', $userId)
+            ->latest()
+            ->limit(10)
+            ->get(['id', 'declared_category', 'estimated_category', 'weight_kg', 'condition', 'input_image_path', 'recommendations', 'created_at']);
+
+        foreach ($analyses as $analysis) {
+            $category = $analysis->estimated_category ?? $analysis->declared_category ?? 'Plastik';
+            $recs = is_array($analysis->recommendations) ? $analysis->recommendations : [];
+            $objectName = $recs['object_name'] ?? $recs['material_title'] ?? "Material {$category}";
+            $weightInfo = $analysis->weight_kg ? " ({$analysis->weight_kg} kg)" : "";
+
+            $activities->push([
+                'type'         => 'plastic_analysis',
+                'action'       => 'Analisis plastik selesai',
+                'description'  => "Analisis AI untuk: {$objectName}{$weightInfo} - Kategori: {$category}",
+                'status'       => 'completed',
+                'reference_id' => $analysis->id,
+                'timestamp'    => $analysis->created_at,
             ]);
         }
 

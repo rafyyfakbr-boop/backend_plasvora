@@ -28,6 +28,24 @@ class AnalysisHistory extends Model
         'is_demo_result'  => 'boolean',
     ];
 
+    protected $appends = ['image_url'];
+
+    /**
+     * URL publik untuk gambar input analisis.
+     */
+    public function getImageUrlAttribute(): ?string
+    {
+        if (empty($this->input_image_path)) {
+            return null;
+        }
+
+        if (filter_var($this->input_image_path, FILTER_VALIDATE_URL)) {
+            return $this->input_image_path;
+        }
+
+        return asset('storage/' . $this->input_image_path);
+    }
+
     /**
      * Pengguna pemilik analisis ini.
      */
