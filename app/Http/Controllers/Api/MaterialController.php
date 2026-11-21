@@ -9,6 +9,7 @@ use App\Models\MaterialListing;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 
 class MaterialController extends Controller
 {
@@ -73,6 +74,7 @@ class MaterialController extends Controller
     public function store(StoreMaterialListingRequest $request): JsonResponse
     {
         $validated = $request->validated();
+        unset($validated['image']);
 
         // owner_id SELALU dari user yang login, tidak dari client
         $validated['owner_id'] = Auth::id();
@@ -80,6 +82,10 @@ class MaterialController extends Controller
         // Normalisasi price jika is_free
         if ($validated['is_free']) {
             $validated['price'] = 0;
+        }
+
+        if ($request->hasFile('image') && $request->file('image')->isValid()) {
+            $validated['image_url'] = $request->file('image')->store('materials', 'public');
         }
 
         $material = MaterialListing::create($validated);
@@ -95,16 +101,23 @@ class MaterialController extends Controller
     /**
      * GET /api/materials/{id}
      * Ambil detail satu listing material.
+     * Nomor WhatsApp penjual hanya ditampilkan jika penjual mengaktifkan whatsapp_public.
      */
     public function show(int $id): JsonResponse
     {
-        $material = MaterialListing::with('owner:id,name')->find($id);
+        $material = MaterialListing::with('owner:id,name,phone,whatsapp_public')->find($id);
 
         if (! $material) {
             return response()->json([
                 'success' => false,
                 'message' => 'Material listing not found',
             ], 404);
+        }
+
+        if ($material->owner) {
+            $isPublic = (bool) $material->owner->whatsapp_public;
+            $material->owner->phone = $isPublic ? $material->owner->phone : null;
+            $material->owner->makeHidden('whatsapp_public');
         }
 
         return response()->json([
@@ -137,7 +150,34 @@ class MaterialController extends Controller
             ], 403);
         }
 
-        $material->update($request->validated());
+        $validated = $request->validated();
+        unset($validated['image']);
+
+        if (array_key_exists('is_free', $validated) && $validated['is_free']) {
+            $validated['price'] = 0;
+        }
+
+        $oldRawImagePath = $material->getRawOriginal('image_url');
+        $replacedImage = false;
+
+        if ($request->hasFile('image') && $request->file('image')->isValid()) {
+            $validated['image_url'] = $request->file('image')->store('materials', 'public');
+            $replacedImage = true;
+        } elseif (array_key_exists('image_url', $validated) && $validated['image_url'] !== $oldRawImagePath) {
+            $replacedImage = true;
+        }
+
+        $material->update($validated);
+
+        // Hanya hapus file lama jika benar-benar milik disk public/materials aplikasi
+        if (
+            $replacedImage
+            && MaterialListing::isManagedStorageImagePath($oldRawImagePath)
+            && Storage::disk('public')->exists($oldRawImagePath)
+        ) {
+            Storage::disk('public')->delete($oldRawImagePath);
+        }
+
         $material->load('owner:id,name');
 
         return response()->json([

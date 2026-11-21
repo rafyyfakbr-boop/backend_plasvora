@@ -20,16 +20,54 @@ class MaterialListing extends Model
         'price',
         'is_free',
         'general_location',
+        'origin_destination_id',
+        'origin_label',
         'description',
         'image_url',
         'status',
     ];
 
     protected $casts = [
-        'weight_kg'  => 'decimal:2',
-        'price'      => 'decimal:2',
-        'is_free'    => 'boolean',
+        'weight_kg'             => 'decimal:2',
+        'price'                 => 'decimal:2',
+        'is_free'               => 'boolean',
+        'origin_destination_id' => 'integer',
     ];
+
+    /**
+     * Resolve public URL for managed storage paths while preserving legacy/external URLs.
+     */
+    public function getImageUrlAttribute(?string $value): ?string
+    {
+        if (empty($value)) {
+            return null;
+        }
+
+        if (filter_var($value, FILTER_VALIDATE_URL)) {
+            return $value;
+        }
+
+        return asset('storage/' . ltrim($value, '/'));
+    }
+
+    /**
+     * Pastikan path gambar benar-benar file hasil upload yang dikelola di disk public/materials.
+     */
+    public static function isManagedStorageImagePath(?string $rawPath): bool
+    {
+        if (! is_string($rawPath) || trim($rawPath) === '') {
+            return false;
+        }
+
+        if (filter_var($rawPath, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+
+        $normalized = ltrim($rawPath, '/');
+
+        return str_starts_with($normalized, 'materials/')
+            && ! str_contains($normalized, '..');
+    }
 
     /**
      * Nilai enum yang valid untuk category.

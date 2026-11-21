@@ -364,4 +364,204 @@ class AuthTest extends TestCase
             $this->travelBack();
         }
     }
+
+    // ─── Stage 1: Phone Number Registration & Profile Update ──────────────
+
+    /** @test */
+    public function user_can_register_with_optional_indonesian_phone_normalized(): void
+    {
+        $response = $this->postJson('/api/register', [
+            'name' => 'Penjual Plasvora',
+            'email' => 'penjual_phone@plasvora.test',
+            'phone' => '0812-3456-7890',
+            'password' => 'Rahasia123',
+            'password_confirmation' => 'Rahasia123',
+        ]);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('data.user.phone', '6281234567890');
+
+        $this->assertDatabaseHas('users', [
+            'email' => 'penjual_phone@plasvora.test',
+            'phone' => '6281234567890',
+        ]);
+    }
+
+    /** @test */
+    public function registration_rejects_invalid_phone_format(): void
+    {
+        $response = $this->postJson('/api/register', [
+            'name' => 'Invalid Phone User',
+            'email' => 'invalid_phone@plasvora.test',
+            'phone' => '12345',
+            'password' => 'Rahasia123',
+            'password_confirmation' => 'Rahasia123',
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonValidationErrors(['phone']);
+    }
+
+    /** @test */
+    public function authenticated_user_can_update_phone_via_patch_me(): void
+    {
+        $user = User::factory()->create(['phone' => null]);
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->patchJson('/api/me', [
+                'phone' => '+62 813 9876 5432',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJson([
+                'success' => true,
+                'data' => [
+                    'id' => $user->id,
+                    'phone' => '6281398765432',
+                ],
+            ]);
+
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id,
+            'phone' => '6281398765432',
+        ]);
+    }
+
+    /** @test */
+    public function patch_me_rejects_invalid_phone_and_allows_clearing_phone(): void
+    {
+        $user = User::factory()->create(['phone' => '6281234567890']);
+
+        $this->actingAs($user, 'sanctum')
+            ->patchJson('/api/me', ['phone' => 'bukan-nomor'])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['phone']);
+
+        $this->actingAs($user, 'sanctum')
+            ->patchJson('/api/me', ['phone' => ''])
+            ->assertStatus(200)
+            ->assertJsonPath('data.phone', null);
+    }
+
+    // ─── Stage 1.1: WhatsApp Contact Privacy ──────────────────────────────
+
+    /** @test */
+    public function existing_and_newly_registered_users_default_to_whatsapp_public_false(): void
+    {
+        $existing = User::factory()->create();
+        $existing->refresh();
+        $this->assertFalse($existing->whatsapp_public);
+
+        $this->actingAs($existing, 'sanctum')
+            ->getJson('/api/me')
+            ->assertStatus(200)
+            ->assertJsonPath('data.whatsapp_public', false);
+
+        // Bahkan jika klien mengirim whatsapp_public=true saat register, tetap harus false
+        $registerResponse = $this->postJson('/api/register', [
+            'name' => 'Privasi Default',
+            'email' => 'privasi_default@plasvora.test',
+            'phone' => '081234567890',
+            'whatsapp_public' => true,
+            'password' => 'Rahasia123',
+            'password_confirmation' => 'Rahasia123',
+        ]);
+
+        $registerResponse->assertStatus(201)
+            ->assertJsonPath('data.user.whatsapp_public', false);
+
+        $this->assertDatabaseHas('users', [
+            'email' => 'privasi_default@plasvora.test',
+            'whatsapp_public' => false,
+        ]);
+    }
+
+    /** @test */
+    public function authenticated_user_can_enable_and_disable_whatsapp_visibility(): void
+    {
+        $user = User::factory()->create([
+            'phone' => '6281234567890',
+            'whatsapp_public' => false,
+        ]);
+
+        $this->actingAs($user, 'sanctum')
+            ->patchJson('/api/me', ['whatsapp_public' => true])
+            ->assertStatus(200)
+            ->assertJsonPath('data.whatsapp_public', true);
+
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id,
+            'whatsapp_public' => true,
+        ]);
+
+        $this->actingAs($user, 'sanctum')
+            ->patchJson('/api/me', ['whatsapp_public' => false])
+            ->assertStatus(200)
+            ->assertJsonPath('data.whatsapp_public', false);
+
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id,
+            'whatsapp_public' => false,
+        ]);
+    }
+
+    /** @test */
+    public function user_cannot_enable_whatsapp_visibility_without_phone_and_clearing_phone_disables_it(): void
+    {
+        $userWithoutPhone = User::factory()->create([
+            'phone' => null,
+            'whatsapp_public' => false,
+        ]);
+
+        $this->actingAs($userWithoutPhone, 'sanctum')
+            ->patchJson('/api/me', ['whatsapp_public' => true])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['whatsapp_public']);
+
+        $userWithPhone = User::factory()->create([
+            'phone' => '6281234567890',
+            'whatsapp_public' => true,
+        ]);
+
+        $this->actingAs($userWithPhone, 'sanctum')
+            ->patchJson('/api/me', ['phone' => ''])
+            ->assertStatus(200)
+            ->assertJsonPath('data.phone', null)
+            ->assertJsonPath('data.whatsapp_public', false);
+
+        $this->assertDatabaseHas('users', [
+            'id' => $userWithPhone->id,
+            'phone' => null,
+            'whatsapp_public' => false,
+        ]);
+    }
+
+    /** @test */
+    public function user_cannot_update_another_users_whatsapp_visibility(): void
+    {
+        $actor = User::factory()->create([
+            'phone' => '6281234567890',
+            'whatsapp_public' => false,
+        ]);
+        $otherUser = User::factory()->create([
+            'phone' => '6281999888777',
+            'whatsapp_public' => false,
+        ]);
+
+        $this->actingAs($actor, 'sanctum')
+            ->patchJson('/api/me', [
+                'id' => $otherUser->id,
+                'user_id' => $otherUser->id,
+                'whatsapp_public' => true,
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('data.id', $actor->id)
+            ->assertJsonPath('data.whatsapp_public', true);
+
+        // User lain tetap tidak terpengaruh
+        $this->assertDatabaseHas('users', [
+            'id' => $otherUser->id,
+            'whatsapp_public' => false,
+        ]);
+    }
 }

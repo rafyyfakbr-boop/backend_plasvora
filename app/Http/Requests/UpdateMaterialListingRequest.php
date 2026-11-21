@@ -16,6 +16,16 @@ class UpdateMaterialListingRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('is_free') && is_string($this->input('is_free'))) {
+            $parsed = filter_var($this->input('is_free'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            if ($parsed !== null) {
+                $this->merge(['is_free' => $parsed]);
+            }
+        }
+    }
+
     /**
      * Semua field bersifat optional (PATCH), tapi jika dikirim harus valid.
      *
@@ -24,16 +34,34 @@ class UpdateMaterialListingRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name'             => ['sometimes', 'string', 'min:3', 'max:255'],
-            'category'         => ['sometimes', 'string', Rule::in(MaterialListing::CATEGORIES)],
-            'weight_kg'        => ['sometimes', 'numeric', 'min:0.01', 'max:99999'],
-            'condition'        => ['sometimes', 'string', Rule::in(MaterialListing::CONDITIONS)],
-            'price'            => ['sometimes', 'numeric', 'min:0'],
-            'is_free'          => ['sometimes', 'boolean'],
-            'general_location' => ['sometimes', 'string', 'min:3', 'max:255'],
-            'description'      => ['sometimes', 'nullable', 'string', 'max:2000'],
-            'image_url'        => ['sometimes', 'nullable', 'url', 'max:500'],
-            'status'           => ['sometimes', 'string', Rule::in(MaterialListing::STATUSES)],
+            'name'                  => ['sometimes', 'string', 'min:3', 'max:255'],
+            'category'              => ['sometimes', 'string', Rule::in(MaterialListing::CATEGORIES)],
+            'weight_kg'             => ['sometimes', 'numeric', 'min:0.01', 'max:99999'],
+            'condition'             => ['sometimes', 'string', Rule::in(MaterialListing::CONDITIONS)],
+            'price'                 => ['sometimes', 'numeric', 'min:0'],
+            'is_free'               => ['sometimes', 'boolean'],
+            'general_location'      => ['sometimes', 'string', 'min:3', 'max:255'],
+            'origin_destination_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'origin_label'          => ['sometimes', 'nullable', 'string', 'max:255'],
+            'description'           => ['sometimes', 'nullable', 'string', 'max:2000'],
+            'image_url'             => ['sometimes', 'nullable', 'url', 'max:500'],
+            'image'                 => ['sometimes', 'nullable', 'file', 'image', 'mimes:jpeg,png,jpg,webp', 'max:10240'],
+            'status'                => ['sometimes', 'string', Rule::in(MaterialListing::STATUSES)],
+        ];
+    }
+
+    /**
+     * Pesan error yang ramah pengguna.
+     */
+    public function messages(): array
+    {
+        return [
+            'origin_destination_id.integer' => 'ID lokasi asal tidak valid.',
+            'origin_destination_id.min'     => 'ID lokasi asal tidak valid.',
+            'origin_label.max'              => 'Label lokasi asal maksimal 255 karakter.',
+            'image.image'                   => 'File harus berupa gambar yang valid.',
+            'image.mimes'                   => 'Format gambar harus berupa jpeg, jpg, png, atau webp.',
+            'image.max'                     => 'Ukuran gambar maksimal adalah 10MB.',
         ];
     }
 

@@ -22,8 +22,40 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        'phone',
+        'whatsapp_public',
         'password',
     ];
+
+    /**
+     * Normalisasi nomor telepon seluler Indonesia (08..., 62..., +62...) ke format 628... untuk WhatsApp.
+     * Mengembalikan null jika kosong atau tidak valid.
+     */
+    public static function normalizeIndonesianPhone(?string $raw): ?string
+    {
+        if ($raw === null) {
+            return null;
+        }
+
+        $cleaned = preg_replace('/[\s\-\(\)\.]+/', '', trim($raw));
+        if ($cleaned === null || $cleaned === '') {
+            return null;
+        }
+
+        if (! preg_match('/^(?:\+?62|0)8[1-9][0-9]{7,11}$/', $cleaned)) {
+            return null;
+        }
+
+        if (str_starts_with($cleaned, '+62')) {
+            return substr($cleaned, 1);
+        }
+
+        if (str_starts_with($cleaned, '0')) {
+            return '62' . substr($cleaned, 1);
+        }
+
+        return $cleaned;
+    }
 
     /**
      * The attributes that should be hidden for serialization.
@@ -45,6 +77,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password'          => 'hashed',
+            'whatsapp_public'   => 'boolean',
         ];
     }
 

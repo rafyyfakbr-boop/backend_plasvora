@@ -16,6 +16,16 @@ class StoreMaterialListingRequest extends FormRequest
         return true; // Auth middleware sudah memastikan ini
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('is_free') && is_string($this->input('is_free'))) {
+            $parsed = filter_var($this->input('is_free'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            if ($parsed !== null) {
+                $this->merge(['is_free' => $parsed]);
+            }
+        }
+    }
+
     /**
      * Aturan validasi untuk membuat listing baru.
      *
@@ -24,15 +34,18 @@ class StoreMaterialListingRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'name'             => ['required', 'string', 'min:3', 'max:255'],
-            'category'         => ['required', 'string', Rule::in(MaterialListing::CATEGORIES)],
-            'weight_kg'        => ['required', 'numeric', 'min:0.01', 'max:99999'],
-            'condition'        => ['required', 'string', Rule::in(MaterialListing::CONDITIONS)],
-            'price'            => ['nullable', 'numeric', 'min:0'],
-            'is_free'          => ['required', 'boolean'],
-            'general_location' => ['required', 'string', 'min:3', 'max:255'],
-            'description'      => ['nullable', 'string', 'max:2000'],
-            'image_url'        => ['nullable', 'url', 'max:500'],
+            'name'                  => ['required', 'string', 'min:3', 'max:255'],
+            'category'              => ['required', 'string', Rule::in(MaterialListing::CATEGORIES)],
+            'weight_kg'             => ['required', 'numeric', 'min:0.01', 'max:99999'],
+            'condition'             => ['required', 'string', Rule::in(MaterialListing::CONDITIONS)],
+            'price'                 => ['nullable', 'numeric', 'min:0'],
+            'is_free'               => ['required', 'boolean'],
+            'general_location'      => ['required', 'string', 'min:3', 'max:255'],
+            'origin_destination_id' => ['nullable', 'integer', 'min:1'],
+            'origin_label'          => ['nullable', 'string', 'max:255'],
+            'description'           => ['nullable', 'string', 'max:2000'],
+            'image_url'             => ['nullable', 'url', 'max:500'],
+            'image'                 => ['nullable', 'file', 'image', 'mimes:jpeg,png,jpg,webp', 'max:10240'],
         ];
     }
 
@@ -53,7 +66,13 @@ class StoreMaterialListingRequest extends FormRequest
             'price.min'                 => 'Harga tidak boleh bernilai negatif.',
             'is_free.required'          => 'Status gratis wajib diisi.',
             'general_location.required' => 'Lokasi umum wajib diisi.',
+            'origin_destination_id.integer' => 'ID lokasi asal tidak valid.',
+            'origin_destination_id.min'     => 'ID lokasi asal tidak valid.',
+            'origin_label.max'              => 'Label lokasi asal maksimal 255 karakter.',
             'description.max'           => 'Deskripsi maksimal 2000 karakter.',
+            'image.image'               => 'File harus berupa gambar yang valid.',
+            'image.mimes'               => 'Format gambar harus berupa jpeg, jpg, png, atau webp.',
+            'image.max'                 => 'Ukuran gambar maksimal adalah 10MB.',
         ];
     }
 

@@ -54,6 +54,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // ─── Autentikasi ──────────────────────────────────────────────────
     Route::post('/logout', [AuthController::class, 'logout'])->name('auth.logout');
     Route::get('/me', [AuthController::class, 'me'])->name('auth.me');
+    Route::patch('/me', [AuthController::class, 'updateProfile'])->name('auth.update-profile');
 
     // ─── Material Listings (mutasi) ───────────────────────────────────
     Route::post('/materials', [MaterialController::class, 'store'])->name('materials.store');

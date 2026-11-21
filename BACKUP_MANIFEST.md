@@ -204,3 +204,66 @@ Copy-Item "C:\Users\PPLG\.gemini\antigravity\brain\ad4f1028-05be-433f-9c28-ee556
 Copy-Item "C:\Users\PPLG\.gemini\antigravity\brain\ad4f1028-05be-433f-9c28-ee55610e9d07\backup_analysis_marketplace_activity_be\routes\api.php" "C:\xampp\htdocs\backend_plasvora\routes\api.php" -Force
 Copy-Item "C:\Users\PPLG\.gemini\antigravity\brain\ad4f1028-05be-433f-9c28-ee55610e9d07\backup_analysis_marketplace_activity_be\tests\Feature\ActivityAndAnalysisTest.php" "C:\xampp\htdocs\backend_plasvora\tests\Feature\ActivityAndAnalysisTest.php" -Force
 ```
+
+
+
+---
+
+## 6. Backup Stage 1 Marketplace Foundation (Phone, Seller Contact, Structured Origin & Listing Image Upload — Backend)
+
+**Tanggal**: 21 November 2026
+
+**Tujuan**:
+1. Menambahkan kolom nullable `phone` pada tabel `users`, normalisasi/validasi nomor Indonesia (`08...`, `62...`, `+62...`), serta endpoint `PATCH /api/me` untuk pembaruan profil/nomor telepon pengguna.
+2. Mengekspos `owner.phone` secara eksklusif pada detail material (`GET /api/materials/{id}`) tanpa menambahkannya pada endpoint daftar/pencarian (`GET /api/materials`).
+3. Menambahkan kolom nullable `origin_destination_id` dan `origin_label` pada tabel `material_listings` sebagai fondasi Stage 2 tanpa mengganggu listing lama.
+4. Mendukung upload gambar multipart pada `POST /api/materials` dan pembaruan gambar pada `PATCH /api/materials/{id}` ke disk `public` direktori `materials/`, dengan penghapusan aman khusus file milik storage aplikasi saat gambar diganti.
+5. Menambahkan feature tests pada `AuthTest.php` dan `MaterialListingTest.php`.
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage1_marketplace_foundation_be\`
+
+### File yang Di-backup Sebelum Diubah:
+1. `routes/api.php`
+2. `app/Models/User.php`
+3. `app/Models/MaterialListing.php`
+4. `app/Http/Controllers/Api/AuthController.php`
+5. `app/Http/Controllers/Api/MaterialController.php`
+6. `app/Http/Requests/StoreMaterialListingRequest.php`
+7. `app/Http/Requests/UpdateMaterialListingRequest.php`
+8. `tests/Feature/AuthTest.php`
+9. `tests/Feature/MaterialListingTest.php`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage1_marketplace_foundation_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+```
+
+
+---
+
+## 7. Backup Stage 1.1 WhatsApp Contact Privacy (Consent Enforcement — Backend)
+
+**Tanggal**: 21 November 2026
+**Tujuan**:
+1. Menambahkan kolom boolean NOT NULL `whatsapp_public` (default `false`) pada tabel `users`.
+2. Memperluas `PATCH /api/me`, `GET /api/me`, `POST /api/login`, dan `POST /api/register` agar mendukung `whatsapp_public` dengan default selalu `false` untuk akun lama maupun baru, validasi nomor telepon sebelum aktivasi, serta penonaktifan otomatis saat nomor telepon dihapus.
+3. Menegakkan privasi di `GET /api/materials/{id}` agar `owner.phone` hanya dikembalikan jika `owner.whatsapp_public === true` (dan tetap tidak pernah muncul di `GET /api/materials`).
+4. Menambahkan feature tests privasi WhatsApp pada `AuthTest.php` dan `MaterialListingTest.php`.
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage1_1_whatsapp_privacy_be\`
+
+### File yang Di-backup Sebelum Diubah:
+1. `app/Models/User.php`
+2. `app/Http/Controllers/Api/AuthController.php`
+3. `app/Http/Controllers/Api/MaterialController.php`
+4. `tests/Feature/AuthTest.php`
+5. `tests/Feature/MaterialListingTest.php`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage1_1_whatsapp_privacy_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+```

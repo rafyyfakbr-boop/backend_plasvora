@@ -5,6 +5,8 @@ namespace Tests\Feature;
 use App\Models\MaterialListing;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 /**
@@ -260,5 +262,137 @@ class MaterialListingTest extends TestCase
             ->deleteJson("/api/materials/{$listing->id}");
 
         $response->assertStatus(403)->assertJson(['success' => false]);
+    }
+
+    // ─── Stage 1: Seller Phone, Origin Metadata & Image Upload ──────────────
+
+    /** @test */
+    public function index_hides_owner_phone_while_show_exposes_owner_phone_only_when_whatsapp_public_is_true(): void
+    {
+        $privateSeller = User::factory()->create([
+            'phone'           => '6281234567890',
+            'whatsapp_public' => false,
+        ]);
+        $publicSeller = User::factory()->create([
+            'phone'           => '6281398765432',
+            'whatsapp_public' => true,
+        ]);
+
+        $privateListing = MaterialListing::factory()->create([
+            'owner_id' => $privateSeller->id,
+            'status'   => 'available',
+        ]);
+        $publicListing = MaterialListing::factory()->create([
+            'owner_id' => $publicSeller->id,
+            'status'   => 'available',
+        ]);
+
+        // Index tidak pernah mengekspos nomor telepon penjual (bahkan jika whatsapp_public=true)
+        $indexResponse = $this->getJson('/api/materials');
+        $indexResponse->assertStatus(200);
+        foreach ($indexResponse->json('data') as $item) {
+            $this->assertArrayNotHasKey('phone', $item['owner']);
+            $this->assertArrayNotHasKey('whatsapp_public', $item['owner']);
+        }
+
+        // Detail menyembunyikan nomor telepon ketika whatsapp_public=false, nama tetap ada
+        $privateDetail = $this->getJson("/api/materials/{$privateListing->id}");
+        $privateDetail->assertStatus(200)
+            ->assertJsonPath('data.owner.name', $privateSeller->name)
+            ->assertJsonPath('data.owner.phone', null);
+        $this->assertArrayNotHasKey('whatsapp_public', $privateDetail->json('data.owner'));
+
+        // Detail menampilkan nomor telepon ketika whatsapp_public=true
+        $publicDetail = $this->getJson("/api/materials/{$publicListing->id}");
+        $publicDetail->assertStatus(200)
+            ->assertJsonPath('data.owner.name', $publicSeller->name)
+            ->assertJsonPath('data.owner.phone', '6281398765432');
+        $this->assertArrayNotHasKey('whatsapp_public', $publicDetail->json('data.owner'));
+    }
+
+    /** @test */
+    public function authenticated_user_can_create_listing_with_image_upload_and_origin_fields(): void
+    {
+        Storage::fake('public');
+        $user = User::factory()->create();
+        $file = UploadedFile::fake()->image('botol_pet.jpg', 800, 600);
+
+        $response = $this->actingAs($user, 'sanctum')
+            ->post('/api/materials', [
+                'name'                  => 'Lot Botol PET Bersih',
+                'category'              => 'PET',
+                'weight_kg'             => 12.5,
+                'condition'             => 'clean',
+                'is_free'               => '0',
+                'price'                 => 37500,
+                'general_location'      => 'Bandung',
+                'origin_destination_id' => 17485,
+                'origin_label'          => 'Braga, Sumur Bandung, Bandung',
+                'description'           => 'Lot bersih siap angkut.',
+                'image'                 => $file,
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(201)
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('data.origin_destination_id', 17485)
+            ->assertJsonPath('data.origin_label', 'Braga, Sumur Bandung, Bandung');
+
+        $listing = MaterialListing::find($response->json('data.id'));
+        $rawPath = $listing->getRawOriginal('image_url');
+        $this->assertStringStartsWith('materials/', $rawPath);
+        Storage::disk('public')->assertExists($rawPath);
+        $this->assertStringContainsString('/storage/materials/', $response->json('data.image_url'));
+    }
+
+    /** @test */
+    public function replacing_uploaded_listing_image_deletes_old_managed_file_only(): void
+    {
+        Storage::fake('public');
+        $owner = User::factory()->create();
+        $oldPath = UploadedFile::fake()->image('old.jpg')->store('materials', 'public');
+
+        $listing = MaterialListing::factory()->create([
+            'owner_id'  => $owner->id,
+            'image_url' => $oldPath,
+        ]);
+
+        $newFile = UploadedFile::fake()->image('new.png');
+        $response = $this->actingAs($owner, 'sanctum')
+            ->post("/api/materials/{$listing->id}", [
+                '_method' => 'PATCH',
+                'image'   => $newFile,
+            ], ['Accept' => 'application/json']);
+
+        $response->assertStatus(200)->assertJsonPath('success', true);
+        Storage::disk('public')->assertMissing($oldPath);
+
+        $listing->refresh();
+        $newRawPath = $listing->getRawOriginal('image_url');
+        $this->assertNotEquals($oldPath, $newRawPath);
+        Storage::disk('public')->assertExists($newRawPath);
+    }
+
+    /** @test */
+    public function updating_listing_preserves_compatibility_with_external_image_url(): void
+    {
+        Storage::fake('public');
+        $owner = User::factory()->create();
+        $listing = MaterialListing::factory()->create([
+            'owner_id'  => $owner->id,
+            'image_url' => 'https://example.com/legacy-pet.jpg',
+        ]);
+
+        $detail = $this->getJson("/api/materials/{$listing->id}");
+        $detail->assertStatus(200)
+            ->assertJsonPath('data.image_url', 'https://example.com/legacy-pet.jpg');
+
+        $newFile = UploadedFile::fake()->image('replacement.jpg');
+        $update = $this->actingAs($owner, 'sanctum')
+            ->post("/api/materials/{$listing->id}", [
+                '_method' => 'PATCH',
+                'image'   => $newFile,
+            ], ['Accept' => 'application/json']);
+
+        $update->assertStatus(200)->assertJsonPath('success', true);
     }
 }
