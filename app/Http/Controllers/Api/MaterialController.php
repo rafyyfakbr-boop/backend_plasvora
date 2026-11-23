@@ -5,10 +5,13 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreMaterialListingRequest;
 use App\Http\Requests\UpdateMaterialListingRequest;
+use App\Models\HandoverRequest;
 use App\Models\MaterialListing;
+use App\Models\Order;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 class MaterialController extends Controller
@@ -129,94 +132,136 @@ class MaterialController extends Controller
 
     /**
      * PATCH /api/materials/{id}
-     * Perbarui listing. Hanya pemilik listing yang boleh mengubah.
+     * Perbarui listing. Hanya pemilik listing yang boleh mengubah dan listing tidak sedang dikunci transaksi.
      */
     public function update(UpdateMaterialListingRequest $request, int $id): JsonResponse
     {
-        $material = MaterialListing::find($id);
+        $oldPathToDelete = null;
 
-        if (! $material) {
+        $response = DB::transaction(function () use ($request, $id, &$oldPathToDelete): JsonResponse {
+            $material = MaterialListing::where('id', $id)->lockForUpdate()->first();
+
+            if (! $material) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Material listing not found',
+                ], 404);
+            }
+
+            // Otorisasi: hanya pemilik listing yang boleh mengubah
+            if ($material->owner_id !== Auth::id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You are not authorized to update this listing',
+                ], 403);
+            }
+
+            // Proteksi transaksi: tolak mutasi jika listing sedang reserved/completed atau terikat order/handover aktif
+            if ($this->isListingLockedByTransaction($material)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Listing material tidak dapat diubah karena sedang direservasi atau telah selesai dalam transaksi.',
+                ], 409);
+            }
+
+            $validated = $request->validated();
+            unset($validated['image']);
+
+            if (array_key_exists('is_free', $validated) && $validated['is_free']) {
+                $validated['price'] = 0;
+            }
+
+            $oldRawImagePath = $material->getRawOriginal('image_url');
+            $replacedImage   = false;
+
+            if ($request->hasFile('image') && $request->file('image')->isValid()) {
+                $validated['image_url'] = $request->file('image')->store('materials', 'public');
+                $replacedImage = true;
+            } elseif (array_key_exists('image_url', $validated) && $validated['image_url'] !== $oldRawImagePath) {
+                $replacedImage = true;
+            }
+
+            $material->update($validated);
+
+            if ($replacedImage && MaterialListing::isManagedStorageImagePath($oldRawImagePath)) {
+                $oldPathToDelete = $oldRawImagePath;
+            }
+
+            $material->load('owner:id,name');
+
             return response()->json([
-                'success' => false,
-                'message' => 'Material listing not found',
-            ], 404);
+                'success' => true,
+                'message' => 'Material listing updated successfully',
+                'data'    => $material,
+            ]);
+        });
+
+        // Hapus file gambar lama hanya setelah transaksi DB berhasil commit
+        if ($oldPathToDelete !== null && Storage::disk('public')->exists($oldPathToDelete)) {
+            Storage::disk('public')->delete($oldPathToDelete);
         }
 
-        // Otorisasi: hanya pemilik listing yang boleh mengubah
-        if ($material->owner_id !== Auth::id()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are not authorized to update this listing',
-            ], 403);
-        }
-
-        $validated = $request->validated();
-        unset($validated['image']);
-
-        if (array_key_exists('is_free', $validated) && $validated['is_free']) {
-            $validated['price'] = 0;
-        }
-
-        $oldRawImagePath = $material->getRawOriginal('image_url');
-        $replacedImage = false;
-
-        if ($request->hasFile('image') && $request->file('image')->isValid()) {
-            $validated['image_url'] = $request->file('image')->store('materials', 'public');
-            $replacedImage = true;
-        } elseif (array_key_exists('image_url', $validated) && $validated['image_url'] !== $oldRawImagePath) {
-            $replacedImage = true;
-        }
-
-        $material->update($validated);
-
-        // Hanya hapus file lama jika benar-benar milik disk public/materials aplikasi
-        if (
-            $replacedImage
-            && MaterialListing::isManagedStorageImagePath($oldRawImagePath)
-            && Storage::disk('public')->exists($oldRawImagePath)
-        ) {
-            Storage::disk('public')->delete($oldRawImagePath);
-        }
-
-        $material->load('owner:id,name');
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Material listing updated successfully',
-            'data'    => $material,
-        ]);
+        return $response;
     }
 
     /**
      * DELETE /api/materials/{id}
      * Menonaktifkan listing (soft delete by status change, bukan hapus data).
-     * Riwayat handover yang terkait tetap dipertahankan.
+     * Riwayat transaksi & handover yang terkait tetap dipertahankan.
      */
     public function destroy(int $id): JsonResponse
     {
-        $material = MaterialListing::find($id);
+        return DB::transaction(function () use ($id): JsonResponse {
+            $material = MaterialListing::where('id', $id)->lockForUpdate()->first();
 
-        if (! $material) {
+            if (! $material) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Material listing not found',
+                ], 404);
+            }
+
+            // Otorisasi: hanya pemilik listing yang boleh menonaktifkan
+            if ($material->owner_id !== Auth::id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You are not authorized to delete this listing',
+                ], 403);
+            }
+
+            if ($this->isListingLockedByTransaction($material)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Listing material tidak dapat dinonaktifkan karena sedang direservasi atau telah selesai dalam transaksi.',
+                ], 409);
+            }
+
+            // Nonaktifkan listing, bukan hapus — riwayat transaksi tetap ada
+            $material->update(['status' => 'inactive']);
+
             return response()->json([
-                'success' => false,
-                'message' => 'Material listing not found',
-            ], 404);
+                'success' => true,
+                'message' => 'Material listing deactivated successfully',
+            ]);
+        });
+    }
+
+    private function isListingLockedByTransaction(MaterialListing $material): bool
+    {
+        if (in_array($material->status, ['reserved', 'completed'], true)) {
+            return true;
         }
 
-        // Otorisasi: hanya pemilik listing yang boleh menonaktifkan
-        if ($material->owner_id !== Auth::id()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You are not authorized to delete this listing',
-            ], 403);
+        $hasActiveOrder = Order::where('listing_id', $material->id)
+            ->whereIn('status', Order::ACTIVE_RESERVATION_STATUSES)
+            ->exists();
+
+        if ($hasActiveOrder) {
+            return true;
         }
 
-        // Nonaktifkan listing, bukan hapus — riwayat transaksi tetap ada
-        $material->update(['status' => 'inactive']);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Material listing deactivated successfully',
-        ]);
+        return HandoverRequest::where('listing_id', $material->id)
+            ->whereIn('status', ['approved', 'handed_over'])
+            ->exists();
     }
 }

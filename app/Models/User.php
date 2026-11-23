@@ -120,4 +120,36 @@ class User extends Authenticatable
     {
         return $this->hasMany(HandoverRequest::class, 'requester_id');
     }
+
+    /**
+     * Alamat pengiriman tersimpan milik pengguna.
+     */
+    public function addresses(): HasMany
+    {
+        return $this->hasMany(UserAddress::class);
+    }
+
+    /**
+     * Pesanan di mana pengguna ini bertindak sebagai pembeli.
+     */
+    public function buyerOrders(): HasMany
+    {
+        return $this->hasMany(Order::class, 'buyer_id');
+    }
+
+    /**
+     * Pesanan di mana pengguna ini bertindak sebagai penjual.
+     */
+    public function sellerOrders(): HasMany
+    {
+        return $this->hasMany(Order::class, 'seller_id');
+    }
+
+    /**
+     * Riwayat perubahan status pesanan yang dipicu oleh pengguna ini.
+     */
+    public function orderStatusHistories(): HasMany
+    {
+        return $this->hasMany(OrderStatusHistory::class, 'actor_id');
+    }
 }

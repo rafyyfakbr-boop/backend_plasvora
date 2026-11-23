@@ -7,6 +7,7 @@ use App\Models\AnalysisHistory;
 use App\Models\HandoverRequest;
 use App\Models\MaterialListing;
 use App\Models\MaterialRequest;
+use App\Models\OrderStatusHistory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 
@@ -128,6 +129,53 @@ class ActivityController extends Controller
                 'status'       => 'completed',
                 'reference_id' => $analysis->id,
                 'timestamp'    => $analysis->created_at,
+            ]);
+        }
+
+        // ─── Order Transactions (dari OrderStatusHistory — tanpa PII pembeli) ─
+        $orderHistories = OrderStatusHistory::with([
+            'order:id,order_number,buyer_id,seller_id,listing_name_snapshot,listing_weight_kg_snapshot',
+        ])
+            ->whereHas('order', function ($q) use ($userId) {
+                $q->where('buyer_id', $userId)
+                    ->orWhere('seller_id', $userId);
+            })
+            ->latest('created_at')
+            ->limit(25)
+            ->get();
+
+        $seenOrderStatusKeys = [];
+        foreach ($orderHistories as $history) {
+            $order = $history->order;
+            if (! $order) {
+                continue;
+            }
+
+            // Hindari event duplikat pada kombinasi order + status tujuan
+            $dedupeKey = "{$order->id}:{$history->to_status}";
+            if (isset($seenOrderStatusKeys[$dedupeKey])) {
+                continue;
+            }
+            $seenOrderStatusKeys[$dedupeKey] = true;
+
+            $isBuyer = (int) $order->buyer_id === (int) $userId;
+
+            $actionLabels = [
+                'pending_payment' => $isBuyer ? 'Pesanan dibuat, menunggu pembayaran' : 'Pesanan baru masuk, menunggu pembayaran',
+                'paid'            => $isBuyer ? 'Pembayaran pesanan terverifikasi' : 'Pesanan telah dibayar, siap dikirim',
+                'shipped'         => $isBuyer ? 'Pesanan sedang dalam pengiriman' : 'Anda menandai pesanan telah dikirim',
+                'completed'       => $isBuyer ? 'Pesanan selesai diterima' : 'Pesanan selesai dikonfirmasi pembeli',
+                'cancelled'       => 'Pesanan dibatalkan',
+                'expired'         => 'Pembayaran pesanan kadaluarsa',
+            ];
+
+            $activities->push([
+                'type'         => 'order',
+                'action'       => $actionLabels[$history->to_status] ?? 'Status pesanan diperbarui',
+                'description'  => "Pesanan {$order->order_number}: {$order->listing_name_snapshot} ({$order->listing_weight_kg_snapshot} kg)",
+                'status'       => $history->to_status,
+                'reference_id' => $order->id,
+                'timestamp'    => $history->created_at,
             ]);
         }
 

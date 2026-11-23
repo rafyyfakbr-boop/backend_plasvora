@@ -101,6 +101,14 @@ class MaterialListing extends Model
     }
 
     /**
+     * Pesanan transaksi yang berkaitan dengan listing ini.
+     */
+    public function orders(): HasMany
+    {
+        return $this->hasMany(Order::class, 'listing_id');
+    }
+
+    /**
      * Scope: hanya listing yang berstatus available.
      */
     public function scopeAvailable($query)

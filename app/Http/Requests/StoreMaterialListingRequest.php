@@ -18,11 +18,22 @@ class StoreMaterialListingRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $merges = [];
+
         if ($this->has('is_free') && is_string($this->input('is_free'))) {
             $parsed = filter_var($this->input('is_free'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
             if ($parsed !== null) {
-                $this->merge(['is_free' => $parsed]);
+                $merges['is_free'] = $parsed;
             }
+        }
+
+        if ($this->exists('origin_label') && is_string($this->input('origin_label'))) {
+            $trimmed = trim($this->input('origin_label'));
+            $merges['origin_label'] = $trimmed !== '' ? $trimmed : null;
+        }
+
+        if (! empty($merges)) {
+            $this->merge($merges);
         }
     }
 
@@ -93,6 +104,26 @@ class StoreMaterialListingRequest extends FormRequest
             // Jika berbayar, harga harus diisi dan lebih dari 0
             if (! $isFree && $price <= 0) {
                 $validator->errors()->add('price', 'Harga harus lebih dari 0 jika material tidak gratis.');
+            }
+
+            // Konsistensi pasangan origin_destination_id & origin_label
+            $originId    = $this->input('origin_destination_id');
+            $originLabel = $this->input('origin_label');
+            $hasId       = $originId !== null && $originId !== '';
+            $hasLabel    = is_string($originLabel) && trim($originLabel) !== '';
+
+            if ($hasId && ! $hasLabel) {
+                $validator->errors()->add(
+                    'origin_label',
+                    'Label lokasi asal wajib diisi jika ID lokasi asal disertakan.'
+                );
+            }
+
+            if (! $hasId && $hasLabel) {
+                $validator->errors()->add(
+                    'origin_destination_id',
+                    'ID lokasi asal wajib diisi jika label lokasi asal disertakan.'
+                );
             }
         });
     }

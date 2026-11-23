@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\HandoverRequest;
 use App\Models\MaterialListing;
+use App\Models\Order;
 use Illuminate\Http\JsonResponse;
 
 class ImpactSummaryController extends Controller
@@ -33,14 +34,39 @@ class ImpactSummaryController extends Controller
 
         // ─── Handover Statistics ───────────────────────────────────────────────
         // Material yang sudah diserahkan (handed_over atau utilization_confirmed)
+        $handoverTransferredListingIds = HandoverRequest::whereIn('status', ['handed_over', 'utilization_confirmed'])
+            ->pluck('listing_id')
+            ->unique()
+            ->all();
+
         $handedOverCount = HandoverRequest::whereIn('status', ['handed_over', 'utilization_confirmed'])->count();
-        $handedOverKg    = HandoverRequest::whereIn('status', ['handed_over', 'utilization_confirmed'])
+        $handedOverKg    = (float) HandoverRequest::whereIn('status', ['handed_over', 'utilization_confirmed'])
             ->sum('actual_weight_kg');
 
-        // Material yang pemanfaatannya sudah dikonfirmasi
+        // Material yang pemanfaatannya sudah dikonfirmasi via handover
+        $confirmedHandoverListingIds = HandoverRequest::where('status', 'utilization_confirmed')
+            ->pluck('listing_id')
+            ->unique()
+            ->all();
+
         $confirmedCount = HandoverRequest::where('status', 'utilization_confirmed')->count();
-        $confirmedKg    = HandoverRequest::where('status', 'utilization_confirmed')
+        $confirmedKg    = (float) HandoverRequest::where('status', 'utilization_confirmed')
             ->sum('actual_weight_kg');
+
+        // ─── Completed Order Statistics (tanpa double-counting terhadap Handover) ─
+        $completedOrdersForHandedOverQuery = Order::where('status', Order::STATUS_COMPLETED);
+        if (! empty($handoverTransferredListingIds)) {
+            $completedOrdersForHandedOverQuery->whereNotIn('listing_id', $handoverTransferredListingIds);
+        }
+        $handedOverCount += (clone $completedOrdersForHandedOverQuery)->count();
+        $handedOverKg    += (float) (clone $completedOrdersForHandedOverQuery)->sum('listing_weight_kg_snapshot');
+
+        $completedOrdersForUtilizedQuery = Order::where('status', Order::STATUS_COMPLETED);
+        if (! empty($confirmedHandoverListingIds)) {
+            $completedOrdersForUtilizedQuery->whereNotIn('listing_id', $confirmedHandoverListingIds);
+        }
+        $confirmedCount += (clone $completedOrdersForUtilizedQuery)->count();
+        $confirmedKg    += (float) (clone $completedOrdersForUtilizedQuery)->sum('listing_weight_kg_snapshot');
 
         // Handover yang masih pending
         $pendingHandoverCount = HandoverRequest::where('status', 'pending')->count();

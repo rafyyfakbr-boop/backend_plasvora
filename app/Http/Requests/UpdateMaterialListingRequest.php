@@ -18,11 +18,22 @@ class UpdateMaterialListingRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $merges = [];
+
         if ($this->has('is_free') && is_string($this->input('is_free'))) {
             $parsed = filter_var($this->input('is_free'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
             if ($parsed !== null) {
-                $this->merge(['is_free' => $parsed]);
+                $merges['is_free'] = $parsed;
             }
+        }
+
+        if ($this->exists('origin_label') && is_string($this->input('origin_label'))) {
+            $trimmed = trim($this->input('origin_label'));
+            $merges['origin_label'] = $trimmed !== '' ? $trimmed : null;
+        }
+
+        if (! empty($merges)) {
+            $this->merge($merges);
         }
     }
 
@@ -46,7 +57,8 @@ class UpdateMaterialListingRequest extends FormRequest
             'description'           => ['sometimes', 'nullable', 'string', 'max:2000'],
             'image_url'             => ['sometimes', 'nullable', 'url', 'max:500'],
             'image'                 => ['sometimes', 'nullable', 'file', 'image', 'mimes:jpeg,png,jpg,webp', 'max:10240'],
-            'status'                => ['sometimes', 'string', Rule::in(MaterialListing::STATUSES)],
+            // Pemilik hanya boleh mengaktifkan/menonaktifkan listing secara manual; reserved/completed dikelola sistem transaksi
+            'status'                => ['sometimes', 'string', Rule::in(['available', 'inactive'])],
         ];
     }
 
@@ -82,6 +94,46 @@ class UpdateMaterialListingRequest extends FormRequest
 
                 if (! $isFree && $price <= 0) {
                     $validator->errors()->add('price', 'Harga harus lebih dari 0 jika material tidak gratis.');
+                }
+            }
+
+            // Konsistensi pasangan origin pada partial PATCH:
+            // Jika keduanya tidak dikirim, biarkan nilai lama utuh.
+            // Jika salah satu dikirim, keduanya wajib dikirim sebagai pasangan konsisten
+            // (sama-sama terisi atau sama-sama null untuk menghapus).
+            $idProvided    = $this->exists('origin_destination_id');
+            $labelProvided = $this->exists('origin_label');
+
+            if ($idProvided || $labelProvided) {
+                if ($idProvided && ! $labelProvided) {
+                    $validator->errors()->add(
+                        'origin_label',
+                        'ID dan label lokasi asal harus dikirim bersama sebagai pasangan yang konsisten.'
+                    );
+                } elseif ($labelProvided && ! $idProvided) {
+                    $validator->errors()->add(
+                        'origin_destination_id',
+                        'ID dan label lokasi asal harus dikirim bersama sebagai pasangan yang konsisten.'
+                    );
+                } else {
+                    $originId    = $this->input('origin_destination_id');
+                    $originLabel = $this->input('origin_label');
+                    $hasId       = $originId !== null && $originId !== '';
+                    $hasLabel    = is_string($originLabel) && trim($originLabel) !== '';
+
+                    if ($hasId && ! $hasLabel) {
+                        $validator->errors()->add(
+                            'origin_label',
+                            'Label lokasi asal wajib diisi jika ID lokasi asal disertakan.'
+                        );
+                    }
+
+                    if (! $hasId && $hasLabel) {
+                        $validator->errors()->add(
+                            'origin_destination_id',
+                            'ID lokasi asal wajib diisi jika label lokasi asal disertakan.'
+                        );
+                    }
                 }
             }
         });

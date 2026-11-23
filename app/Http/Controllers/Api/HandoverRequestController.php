@@ -7,6 +7,7 @@ use App\Http\Requests\StoreHandoverRequestRequest;
 use App\Http\Requests\UpdateHandoverStatusRequest;
 use App\Models\HandoverRequest;
 use App\Models\MaterialListing;
+use App\Models\Order;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -53,72 +54,90 @@ class HandoverRequestController extends Controller
 
     /**
      * POST /api/handover-requests
-     * Ajukan permintaan handover untuk sebuah listing.
+     * Ajukan permintaan handover untuk sebuah listing (dikunci secara atomik untuk mencegah konflik dengan Order/Handover aktif).
      */
     public function store(StoreHandoverRequestRequest $request): JsonResponse
     {
-        $listingId = $request->input('listing_id');
+        return DB::transaction(function () use ($request): JsonResponse {
+            $listingId = (int) $request->input('listing_id');
 
-        // Ambil listing dan pastikan tersedia
-        $listing = MaterialListing::find($listingId);
+            // Kunci baris MaterialListing untuk mencegah race dengan checkout Order maupun Handover lain
+            $listing = MaterialListing::where('id', $listingId)->lockForUpdate()->first();
 
-        if (! $listing || $listing->status !== 'available') {
+            if (! $listing || $listing->status !== 'available') {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Material listing is not available for handover',
+                ], 422);
+            }
+
+            // Pengguna tidak bisa meminta listing milik sendiri
+            if ($listing->owner_id === Auth::id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You cannot request handover for your own listing',
+                ], 422);
+            }
+
+            // Tolak jika sudah ada Order aktif atau Handover yang telah disetujui/diserahkan pada listing ini
+            $hasActiveOrder = Order::where('listing_id', $listing->id)
+                ->whereIn('status', Order::ACTIVE_RESERVATION_STATUSES)
+                ->exists();
+
+            $hasConflictingHandover = HandoverRequest::where('listing_id', $listing->id)
+                ->whereIn('status', ['approved', 'handed_over'])
+                ->exists();
+
+            if ($hasActiveOrder || $hasConflictingHandover) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Material listing is currently reserved by an active transaction',
+                ], 409);
+            }
+
+            // Cek apakah sudah ada pending request dari user ini untuk listing ini
+            $existingRequest = HandoverRequest::where('listing_id', $listingId)
+                ->where('requester_id', Auth::id())
+                ->whereIn('status', ['pending', 'approved'])
+                ->first();
+
+            if ($existingRequest) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'You already have a pending or approved handover request for this listing',
+                ], 422);
+            }
+
+            $requestedWeight = (float) $request->input('requested_weight_kg');
+
+            if ($requestedWeight > (float) $listing->weight_kg) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Requested weight exceeds available weight (' . $listing->weight_kg . ' kg)',
+                ], 422);
+            }
+
+            $handover = HandoverRequest::create([
+                'listing_id'          => $listingId,
+                'owner_id'            => $listing->owner_id,
+                'requester_id'        => Auth::id(),
+                'requested_weight_kg' => $requestedWeight,
+                'note'                => $request->input('note'),
+                'status'              => 'pending',
+            ]);
+
+            $handover->load([
+                'listing:id,name,category',
+                'owner:id,name',
+                'requester:id,name',
+            ]);
+
             return response()->json([
-                'success' => false,
-                'message' => 'Material listing is not available for handover',
-            ], 422);
-        }
-
-        // Pengguna tidak bisa meminta listing milik sendiri
-        if ($listing->owner_id === Auth::id()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You cannot request handover for your own listing',
-            ], 422);
-        }
-
-        // Cek apakah sudah ada pending request dari user ini untuk listing ini
-        $existingRequest = HandoverRequest::where('listing_id', $listingId)
-            ->where('requester_id', Auth::id())
-            ->whereIn('status', ['pending', 'approved'])
-            ->first();
-
-        if ($existingRequest) {
-            return response()->json([
-                'success' => false,
-                'message' => 'You already have a pending or approved handover request for this listing',
-            ], 422);
-        }
-
-        $requestedWeight = (float) $request->input('requested_weight_kg');
-
-        if ($requestedWeight > (float) $listing->weight_kg) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Requested weight exceeds available weight (' . $listing->weight_kg . ' kg)',
-            ], 422);
-        }
-
-        $handover = HandoverRequest::create([
-            'listing_id'          => $listingId,
-            'owner_id'            => $listing->owner_id,
-            'requester_id'        => Auth::id(),
-            'requested_weight_kg' => $requestedWeight,
-            'note'                => $request->input('note'),
-            'status'              => 'pending',
-        ]);
-
-        $handover->load([
-            'listing:id,name,category',
-            'owner:id,name',
-            'requester:id,name',
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Handover request submitted successfully',
-            'data'    => $handover,
-        ], 201);
+                'success' => true,
+                'message' => 'Handover request submitted successfully',
+                'data'    => $handover,
+            ], 201);
+        });
     }
 
     /**
@@ -217,9 +236,13 @@ class HandoverRequestController extends Controller
             }
 
             // ─── SEC-003: Cegah persetujuan ganda terhadap material yang sama ─────
-            // Jika status baru adalah 'approved', pastikan material listing masih 'available'
+            // Jika status baru adalah 'approved', pastikan material listing masih 'available' dan tidak terikat Order aktif
             if ($newStatus === 'approved') {
-                if ($listing->status !== 'available') {
+                $hasActiveOrder = Order::where('listing_id', $listing->id)
+                    ->whereIn('status', Order::ACTIVE_RESERVATION_STATUSES)
+                    ->exists();
+
+                if ($listing->status !== 'available' || $hasActiveOrder) {
                     return response()->json([
                         'success' => false,
                         'message' => 'Material listing is no longer available for handover',

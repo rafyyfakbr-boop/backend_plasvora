@@ -8,6 +8,10 @@ use App\Http\Controllers\Api\ImpactSummaryController;
 use App\Http\Controllers\Api\MaterialController;
 use App\Http\Controllers\Api\MaterialRequestController;
 use App\Http\Controllers\Api\MatchingController;
+use App\Http\Controllers\Api\MidtransWebhookController;
+use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\ShippingController;
+use App\Http\Controllers\Api\UserAddressController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -44,6 +48,11 @@ Route::get('/material-requests/{id}', [MaterialRequestController::class, 'show']
 
 // ─── Impact Summary (publik untuk display) ─────────────────────────────
 Route::get('/impact-summary', [ImpactSummaryController::class, 'index'])->name('impact-summary.index');
+
+// ─── Midtrans Payment Webhook (publik, diverifikasi via SHA-512 signature) ─
+Route::post('/webhooks/midtrans', [MidtransWebhookController::class, 'handle'])
+    ->middleware('throttle:midtrans-webhook')
+    ->name('webhooks.midtrans');
 
 // ═══════════════════════════════════════════════════════════════════════
 // ENDPOINT TERPROTEKSI — Memerlukan Bearer token (Laravel Sanctum)
@@ -88,4 +97,44 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/analyses', [AnalysisController::class, 'store'])
         ->middleware('throttle:analyses')
         ->name('analyses.store');
+
+    // ─── Buyer Addresses (Stage 2) ────────────────────────────────────
+    Route::get('/addresses', [UserAddressController::class, 'index'])->name('addresses.index');
+    Route::post('/addresses', [UserAddressController::class, 'store'])->name('addresses.store');
+    Route::patch('/addresses/{id}', [UserAddressController::class, 'update'])->name('addresses.update');
+    Route::delete('/addresses/{id}', [UserAddressController::class, 'destroy'])->name('addresses.destroy');
+
+    // ─── Shipping & Destination Search (Stage 2) ──────────────────────
+    Route::get('/shipping/destinations', [ShippingController::class, 'destinations'])
+        ->middleware('throttle:shipping-search')
+        ->name('shipping.destinations');
+    Route::post('/shipping/estimate', [ShippingController::class, 'estimate'])
+        ->middleware('throttle:shipping-estimate')
+        ->name('shipping.estimate');
+
+    // ─── Orders & Transactions (Stage 3) ──────────────────────────────
+    Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
+    Route::post('/orders', [OrderController::class, 'store'])
+        ->middleware('throttle:checkout')
+        ->name('orders.store');
+    Route::get('/orders/{order}', [OrderController::class, 'show'])
+        ->whereNumber('order')
+        ->name('orders.show');
+    Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])
+        ->whereNumber('order')
+        ->name('orders.cancel');
+    Route::post('/orders/{order}/retry-payment', [OrderController::class, 'retryPayment'])
+        ->middleware('throttle:payment-status')
+        ->whereNumber('order')
+        ->name('orders.retry-payment');
+    Route::post('/orders/{order}/refresh-payment', [OrderController::class, 'refreshPayment'])
+        ->middleware('throttle:payment-status')
+        ->whereNumber('order')
+        ->name('orders.refresh-payment');
+    Route::post('/orders/{order}/ship', [OrderController::class, 'ship'])
+        ->whereNumber('order')
+        ->name('orders.ship');
+    Route::post('/orders/{order}/confirm-delivery', [OrderController::class, 'confirmDelivery'])
+        ->whereNumber('order')
+        ->name('orders.confirm-delivery');
 });

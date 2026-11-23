@@ -395,4 +395,83 @@ class MaterialListingTest extends TestCase
 
         $update->assertStatus(200)->assertJsonPath('success', true);
     }
+
+    // ─── Stage 2: Origin Field Pair Consistency Validation ──────────────────
+
+    /** @test */
+    public function creating_listing_rejects_partial_origin_pair(): void
+    {
+        $user = User::factory()->create();
+
+        $base = [
+            'name'             => 'Lot PET Bandung',
+            'category'         => 'PET',
+            'weight_kg'        => 5.0,
+            'condition'        => 'clean',
+            'is_free'          => false,
+            'price'            => 15000,
+            'general_location' => 'Bandung',
+        ];
+
+        // ID tanpa label -> 422
+        $this->actingAs($user, 'sanctum')
+            ->postJson('/api/materials', array_merge($base, [
+                'origin_destination_id' => 4949,
+            ]))
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['origin_label']);
+
+        // Label tanpa ID -> 422
+        $this->actingAs($user, 'sanctum')
+            ->postJson('/api/materials', array_merge($base, [
+                'origin_label' => 'BRAGA, SUMUR BANDUNG, BANDUNG',
+            ]))
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['origin_destination_id']);
+    }
+
+    /** @test */
+    public function updating_listing_enforces_origin_pair_and_preserves_existing_origin_when_omitted(): void
+    {
+        $owner = User::factory()->create();
+        $listing = MaterialListing::factory()->create([
+            'owner_id'              => $owner->id,
+            'origin_destination_id' => 4949,
+            'origin_label'          => 'BRAGA, SUMUR BANDUNG, BANDUNG',
+        ]);
+
+        // Partial PATCH tanpa origin fields -> nilai lama tetap utuh
+        $this->actingAs($owner, 'sanctum')
+            ->patchJson("/api/materials/{$listing->id}", [
+                'general_location' => 'Kota Bandung',
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('data.origin_destination_id', 4949)
+            ->assertJsonPath('data.origin_label', 'BRAGA, SUMUR BANDUNG, BANDUNG');
+
+        // Mengirim hanya salah satu field origin pada PATCH -> 422
+        $this->actingAs($owner, 'sanctum')
+            ->patchJson("/api/materials/{$listing->id}", [
+                'origin_destination_id' => 6157,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['origin_label']);
+
+        $this->actingAs($owner, 'sanctum')
+            ->patchJson("/api/materials/{$listing->id}", [
+                'origin_label' => 'BABAKANKARET, CIANJUR',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['origin_destination_id']);
+
+        // Mengosongkan keduanya bersamaan -> 200
+        $this->actingAs($owner, 'sanctum')
+            ->patchJson("/api/materials/{$listing->id}", [
+                'origin_destination_id' => null,
+                'origin_label'          => null,
+            ])
+            ->assertStatus(200)
+            ->assertJsonPath('data.origin_destination_id', null)
+            ->assertJsonPath('data.origin_label', null);
+    }
 }

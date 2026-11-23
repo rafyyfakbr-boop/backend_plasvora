@@ -87,6 +87,62 @@ class AppServiceProvider extends ServiceProvider
                     ->response($throttleResponse),
             ];
         });
+
+        // 4. Rate limiter pencarian destinasi RajaOngkir (Stage 2)
+        // Batas: 30 permintaan/menit per pengguna terautentikasi (fallback IP)
+        RateLimiter::for('shipping-search', function (Request $request) use ($throttleResponse) {
+            $key = $request->user()?->id
+                ? 'shipping-search:user:' . $request->user()->id
+                : 'shipping-search:ip:' . $request->ip();
+
+            return Limit::perMinute(30)
+                ->by($key)
+                ->response($throttleResponse);
+        });
+
+        // 5. Rate limiter estimasi ongkir RajaOngkir (Stage 2)
+        // Batas: 20 permintaan/menit per pengguna terautentikasi (fallback IP)
+        RateLimiter::for('shipping-estimate', function (Request $request) use ($throttleResponse) {
+            $key = $request->user()?->id
+                ? 'shipping-estimate:user:' . $request->user()->id
+                : 'shipping-estimate:ip:' . $request->ip();
+
+            return Limit::perMinute(20)
+                ->by($key)
+                ->response($throttleResponse);
+        });
+
+        // 6. Rate limiter checkout pesanan (Stage 3)
+        // Batas: 10 permintaan/menit per pengguna terautentikasi (fallback IP)
+        RateLimiter::for('checkout', function (Request $request) use ($throttleResponse) {
+            $key = $request->user()?->id
+                ? 'checkout:user:' . $request->user()->id
+                : 'checkout:ip:' . $request->ip();
+
+            return Limit::perMinute(10)
+                ->by($key)
+                ->response($throttleResponse);
+        });
+
+        // 7. Rate limiter sinkronisasi & retry status pembayaran Midtrans (Stage 3)
+        // Batas: 20 permintaan/menit per pengguna terautentikasi (fallback IP)
+        RateLimiter::for('payment-status', function (Request $request) use ($throttleResponse) {
+            $key = $request->user()?->id
+                ? 'payment-status:user:' . $request->user()->id
+                : 'payment-status:ip:' . $request->ip();
+
+            return Limit::perMinute(20)
+                ->by($key)
+                ->response($throttleResponse);
+        });
+
+        // 8. Rate limiter webhook Midtrans publik (Stage 3)
+        // Burst allowance memadai per IP agar retry sah Midtrans tidak tertolak
+        RateLimiter::for('midtrans-webhook', function (Request $request) use ($throttleResponse) {
+            return Limit::perMinute(120)
+                ->by('midtrans-webhook:ip:' . $request->ip())
+                ->response($throttleResponse);
+        });
     }
 }
 

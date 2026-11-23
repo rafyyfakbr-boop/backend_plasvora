@@ -267,3 +267,180 @@ Direktori Backup Fisik:
 $bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage1_1_whatsapp_privacy_be"
 Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
 ```
+
+
+---
+
+## 8. Backup Stage 2 Batch 1 — Backend Foundation (RajaOngkir Config, Rate Limiters, UserAddress Schema & Service)
+
+**Tanggal**: 21 November 2026
+**Tujuan**:
+1. Menambahkan konfigurasi `rajaongkir` di `config/services.php` dan placeholder non-secret pada `.env.example`.
+2. Menambahkan named rate limiters `shipping-search` (30 req/menit) dan `shipping-estimate` (20 req/menit) di `app/Providers/AppServiceProvider.php`.
+3. Menambahkan relasi `addresses(): HasMany` pada `app/Models/User.php`.
+4. Membuat migrasi `user_addresses`, model `UserAddress`, dan layanan `RajaOngkirService`.
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage2_batch1_be\`
+
+### File yang Di-backup Sebelum Diubah:
+1. `config/services.php`
+2. `.env.example`
+3. `app/Providers/AppServiceProvider.php`
+4. `app/Models/User.php`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage2_batch1_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+```
+
+
+---
+
+## 9. Backup Stage 2 Batch 2 — Backend APIs & Feature Tests (Addresses, Shipping & Origin Pair Validation)
+
+**Tanggal**: 21 November 2026
+**Tujuan**:
+1. Menambahkan CRUD API alamat pembeli (`/api/addresses`) dengan penguncian transaksi default-address pada baris `users` dan proteksi kepemilikan (IDOR).
+2. Menambahkan API pencarian destinasi (`/api/shipping/destinations`) dan estimasi ongkos kirim otoritatif server-side (`/api/shipping/estimate`).
+3. Menambahkan validasi konsistensi berpasangan `origin_destination_id` & `origin_label` pada `StoreMaterialListingRequest` dan `UpdateMaterialListingRequest`.
+4. Menambahkan feature tests komprehensif (`UserAddressTest.php`, `ShippingTest.php`, serta tambahan uji pair validation pada `MaterialListingTest.php`).
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage2_batch2_be\`
+
+### File yang Di-backup Sebelum Diubah:
+1. `routes/api.php`
+2. `app/Http/Requests/StoreMaterialListingRequest.php`
+3. `app/Http/Requests/UpdateMaterialListingRequest.php`
+4. `tests/Feature/MaterialListingTest.php`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage2_batch2_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+```
+
+
+---
+
+## 10. Backup Stage 3 Batch 1 — Backend Database, Models & Midtrans Foundation
+
+**Tanggal**: 22 November 2026  
+**Batch**: Stage 3 — Batch 1 (Database, Models & Midtrans Foundation)  
+**Tujuan**:
+1. Menambahkan tiga migrasi fondasi transaksi: `orders`, `order_status_histories`, dan `payment_webhook_events` dengan snapshot immutable, harga whole-Rupiah (`unsignedBigInteger`), foreign key protektif (`restrictOnDelete` / `nullOnDelete`), dan indeks terukur.
+2. Membuat model Eloquent `Order`, `OrderStatusHistory`, dan `PaymentWebhookEvent`, serta memperluas relasi non-destruktif pada `User`, `MaterialListing`, dan `UserAddress`.
+3. Menambahkan konfigurasi Midtrans terpisah (`Server Key`, `Signature Secret Key`, dan opsional `Signature Secret Key Previous`) pada `config/services.php` dan placeholder non-secret pada `.env.example`.
+4. Membuat `App\Exceptions\MidtransException` dan `App\Services\MidtransService` berbasis Laravel HTTP Client tanpa SDK tambahan.
+5. Menambahkan unit tests fondasi `tests/Unit/Services/MidtransServiceTest.php` dan `tests/Unit/Models/OrderModelTest.php`.
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage3_batch1_be\`
+
+### File Eksisting yang Di-backup & Dimodifikasi:
+1. `.env.example` — Menambahkan placeholder non-secret konfigurasi Midtrans Access Keys.
+2. `config/services.php` — Menambahkan blok konfigurasi `midtrans` dengan pemisahan Server Key vs Signature Secret Key dan default Sandbox.
+3. `app/Models/User.php` — Menambahkan relasi `buyerOrders()`, `sellerOrders()`, dan `orderStatusHistories()`.
+4. `app/Models/MaterialListing.php` — Menambahkan relasi `orders()`.
+5. `app/Models/UserAddress.php` — Menambahkan relasi `orders()`.
+
+### File Baru yang Dibuat:
+1. `database/migrations/2026_11_22_000002_create_orders_table.php`
+2. `database/migrations/2026_11_22_000003_create_order_status_histories_table.php`
+3. `database/migrations/2026_11_22_000004_create_payment_webhook_events_table.php`
+4. `app/Models/Order.php`
+5. `app/Models/OrderStatusHistory.php`
+6. `app/Models/PaymentWebhookEvent.php`
+7. `app/Exceptions/MidtransException.php`
+8. `app/Services/MidtransService.php`
+9. `tests/Unit/Services/MidtransServiceTest.php`
+10. `tests/Unit/Models/OrderModelTest.php`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage3_batch1_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+```
+
+
+---
+
+## 11. Backup Stage 3 — Backend Transaction Lifecycle (Checkout, Midtrans Snap, Webhook, Fulfillment, Expiry & Guards)
+
+**Tanggal**: 22 November 2026  
+**Batch**: Stage 3 — Backend Transaction Lifecycle (Konsolidasi Batch 2 & Batch 3)  
+**Tujuan**:
+1. Mengimplementasikan seluruh siklus transaksi backend: checkout atomik & idempoten (`POST /api/orders`), Midtrans Snap Redirect, retry/refresh pembayaran, pembatalan pembeli otoritatif, webhook Midtrans SHA-512, pengiriman penjual (`POST /api/orders/{order}/ship`), konfirmasi penerimaan pembeli (`POST /api/orders/{order}/confirm-delivery`), dan daftar/detail pesanan dengan privasi alamat pembeli.
+2. Menambahkan Artisan command `orders:expire-unpaid` dan penjadwalan 5 menitan pada `routes/console.php`.
+3. Memperluas `MidtransService` dengan `cancelTransaction()`, `expireTransaction()`, `paymentExpiryMinutes()`, dan verifikasi opsional `signature_key` pada respons Status API.
+4. Menambahkan perlindungan kontensi listing & handover (`MaterialController`, `UpdateMaterialListingRequest`, `HandoverRequestController`) agar satu lot material tidak pernah dapat terjual atau direservasi dua kali.
+5. Mengintegrasikan riwayat status pesanan ke `ActivityController` (tanpa PII) dan pesanan selesai ke `ImpactSummaryController` (tanpa double-counting).
+6. Menambahkan feature tests komprehensif (`OrderCheckoutTest`, `MidtransWebhookTest`, `OrderLifecycleTest`, `OrderExpiryTest`).
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage3_backend_lifecycle_be\`
+
+### File Eksisting yang Di-backup & Dimodifikasi:
+1. `.env.example` — Menambahkan placeholder `MIDTRANS_PAYMENT_EXPIRY_MINUTES=1440`.
+2. `config/services.php` — Menambahkan kunci konfigurasi `midtrans.payment_expiry_minutes`.
+3. `app/Services/MidtransService.php` — Menambahkan `paymentExpiryMinutes()`, `cancelTransaction()`, `expireTransaction()`, dan verifikasi `signature_key` pada Status API.
+4. `app/Providers/AppServiceProvider.php` — Menambahkan rate limiters `checkout`, `payment-status`, dan `midtrans-webhook`.
+5. `routes/api.php` — Mendaftarkan 8 endpoint terautentikasi `/api/orders*` dan 1 endpoint publik `POST /api/webhooks/midtrans`.
+6. `routes/console.php` — Menjadwalkan `orders:expire-unpaid` setiap 5 menit.
+7. `app/Http/Requests/UpdateMaterialListingRequest.php` — Membatasi perubahan manual status listing hanya pada `available` / `inactive`.
+8. `app/Http/Controllers/Api/MaterialController.php` — Mengunci listing pada `update`/`destroy` dan menolak (`409`) jika terikat transaksi aktif.
+9. `app/Http/Controllers/Api/HandoverRequestController.php` — Mengunci listing pada `store` dan menolak (`409`) jika ada Order/Handover aktif pada `store` & `updateStatus`.
+10. `app/Http/Controllers/Api/ActivityController.php` — Menambahkan event transaksi dari `OrderStatusHistory` tanpa PII pembeli.
+11. `app/Http/Controllers/Api/ImpactSummaryController.php` — Menghitung bobot pesanan `completed` tanpa double-counting dengan Handover.
+
+### File Baru yang Dibuat:
+1. `app/Support/RupiahAmount.php`
+2. `app/Exceptions/OrderOperationException.php`
+3. `app/Policies/OrderPolicy.php`
+4. `app/Http/Requests/StoreOrderRequest.php`
+5. `app/Http/Requests/CancelOrderRequest.php`
+6. `app/Http/Requests/ShipOrderRequest.php`
+7. `app/Services/OrderService.php`
+8. `app/Http/Controllers/Api/OrderController.php`
+9. `app/Http/Controllers/Api/MidtransWebhookController.php`
+10. `app/Console/Commands/ExpireUnpaidOrdersCommand.php`
+11. `tests/Feature/OrderCheckoutTest.php`
+12. `tests/Feature/MidtransWebhookTest.php`
+13. `tests/Feature/OrderLifecycleTest.php`
+14. `tests/Feature/OrderExpiryTest.php`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage3_backend_lifecycle_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+```
+
+
+---
+
+## 12. Backup Stage 3 Targeted Correction — Snap Session Cancel API & Explicit +0700 Expiry Start Time
+
+**Tanggal**: 22 November 2026  
+**Batch**: Stage 3 — Targeted Review & Correction (Snap Session Cancellation & Expiry Start Time)  
+**Tujuan**:
+1. Menambahkan `MidtransService::cancelSnapSession(string $snapToken)` menggunakan endpoint resmi `POST /snap/v1/transactions/{token}/cancel` (Snap host Sandbox/Production) dengan header `Authorization: {merchant_server_key}` (raw Server Key sesuai dokumentasi Midtrans) serta pemetaan respons `canceled`, `already_canceled`, `in_progress`, `not_found`, dan timeout/network failure.
+2. Memperbarui `OrderService::cancelOrderByBuyer()` agar membatalkan Snap Session ketika Core API belum memiliki transaksi (`404`), melepas listing secara atomik bila terkonfirmasi `canceled`/`already_canceled`, melakukan cek ulang GET Status & rekonsiliasi tanpa melepas listing bila `Transaction is on progress`, mempertahankan reservasi saat `not_found`/timeout, serta memastikan operasi cancel idempoten dan memblokir order `paid`/`shipped`/`completed`.
+3. Memperbaiki `OrderService::buildSnapPayload()` dan `resolveEffectiveExpiryTime()` agar `expiry.start_time` secara eksplisit menggunakan timezone `+0700` (`Asia/Jakarta`), konsisten dengan `orders.payment_expires_at` (24 jam) dan `page_expiry`.
+4. Menambahkan unit & feature tests menggunakan `Http::fake()` di `MidtransServiceTest.php` dan `OrderCheckoutTest.php`.
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage3_snap_cancel_expiry_fix_be\`
+
+### File Eksisting yang Di-backup & Dimodifikasi:
+1. `app/Services/MidtransService.php`
+2. `app/Services/OrderService.php`
+3. `tests/Unit/Services/MidtransServiceTest.php`
+4. `tests/Feature/OrderCheckoutTest.php`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage3_snap_cancel_expiry_fix_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+```
