@@ -444,3 +444,79 @@ Direktori Backup Fisik:
 $bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_stage3_snap_cancel_expiry_fix_be"
 Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
 ```
+
+
+---
+
+## 13. Backup Fitur Galeri Karya ("Galeri Karya" — End-to-End Backend)
+
+**Tanggal**: 23 November 2026  
+**Tujuan**:
+1. Menambahkan 3 migrasi baru (`gallery_works`, `gallery_work_images`, `gallery_work_likes`) dengan foreign key protektif, indeks moderasi & popularitas, serta `SoftDeletes` pada karya galeri.
+2. Membuat konfigurasi `config/gallery.php`, model `GalleryWork`, `GalleryWorkImage`, `GalleryWorkLike`, rule `AllowedVideoUrl` (ketat HTTPS + host YouTube/TikTok/Instagram tanpa kredensial), policy `GalleryWorkPolicy`, FormRequest `StoreGalleryWorkRequest` & `UpdateGalleryWorkRequest`, serta controller `GalleryWorkController`.
+3. Menambahkan named rate limiters (`gallery-read`, `gallery-write`, `gallery-like`) pada `AppServiceProvider` dan mendaftarkan 7 endpoint galeri (`/api/gallery*`, `/api/me/gallery`) pada `routes/api.php`.
+4. Menambahkan Artisan commands moderasi (`gallery:pending` dan `gallery:review`), seeder standalone `GallerySeeder` (tidak dimasukkan ke `DatabaseSeeder`), dokumentasi kontrak API `GALLERY_API.md`, dan suite feature tests `tests/Feature/GalleryWorkTest.php`.
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_gallery_feature_be\`
+
+### File Eksisting yang Di-backup & Dimodifikasi:
+1. `routes/api.php`
+2. `app/Providers/AppServiceProvider.php`
+3. `app/Models/User.php`
+
+### File Baru yang Dibuat:
+1. `config/gallery.php`
+2. `database/migrations/2026_11_23_000001_create_gallery_works_table.php`
+3. `database/migrations/2026_11_23_000002_create_gallery_work_images_table.php`
+4. `database/migrations/2026_11_23_000003_create_gallery_work_likes_table.php`
+5. `app/Models/GalleryWork.php`
+6. `app/Models/GalleryWorkImage.php`
+7. `app/Models/GalleryWorkLike.php`
+8. `app/Rules/AllowedVideoUrl.php`
+9. `app/Policies/GalleryWorkPolicy.php`
+10. `app/Http/Requests/StoreGalleryWorkRequest.php`
+11. `app/Http/Requests/UpdateGalleryWorkRequest.php`
+12. `app/Http/Controllers/Api/GalleryWorkController.php`
+13. `app/Console/Commands/GalleryPendingCommand.php`
+14. `app/Console/Commands/GalleryReviewCommand.php`
+15. `database/seeders/GallerySeeder.php`
+16. `tests/Feature/GalleryWorkTest.php`
+17. `GALLERY_API.md`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_gallery_feature_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+```
+
+
+
+---
+
+## 14. Backup Perbaikan Alur Publikasi Langsung Galeri Karya (Keep Ownership Declaration, Remove Admin Moderation — Backend)
+
+**Tanggal**: 23 November 2026  
+**Tujuan**:
+1. Memperbarui `GalleryWorkController::store()` agar karya baru yang valid (dengan `ownership_confirmed` tervalidasi wajib) langsung dipublikasikan oleh backend dengan `status = 'approved'` dan `published_at = now()` tanpa antrean moderasi admin, tetap mengabaikan field terlindungi dari klien (`status`, `likes_count`, `user_id`).
+2. Memperbarui `GalleryWorkController::update()` agar mengedit karya berstatus `approved` mempertahankan status tayang (`approved`), dan mengedit karya legacy berstatus `rejected` tidak otomatis mengubahnya menjadi `approved`.
+3. Menambahkan data migration baru yang terarah dan reversibel (`database/migrations/2026_11_23_000004_publish_legacy_pending_gallery_works.php`) untuk memublikasikan hanya karya aktif berstatus `pending` (`deleted_at IS NULL`) tanpa menyentuh karya `rejected`, soft-deleted, atau sudah direview.
+4. Memperbarui dokumentasi `GALLERY_API.md` dan suite feature tests `tests/Feature/GalleryWorkTest.php` (termasuk pengujian langsung untuk data migration `up()`/`down()`).
+
+Direktori Backup Fisik:
+`C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_gallery_publication_flow_be\`
+
+### File Eksisting yang Di-backup & Dimodifikasi (3 file):
+1. `app/Http/Controllers/Api/GalleryWorkController.php`
+2. `tests/Feature/GalleryWorkTest.php`
+3. `GALLERY_API.md`
+
+### File Baru yang Dibuat (1 file):
+1. `database/migrations/2026_11_23_000004_publish_legacy_pending_gallery_works.php`
+
+### Langkah Pemulihan (Non-Git):
+```powershell
+$bak = "C:\Users\PPLG\.gemini\antigravity\brain\d907174e-f225-41e2-a0df-e727922bd3aa\backup_gallery_publication_flow_be"
+Copy-Item "$bak\*" "C:\xampp\htdocs\backend_plasvora\" -Recurse -Force
+Remove-Item "C:\xampp\htdocs\backend_plasvora\database\migrations\2026_11_23_000004_publish_legacy_pending_gallery_works.php" -ErrorAction SilentlyContinue
+```

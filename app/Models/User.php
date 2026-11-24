@@ -152,4 +152,20 @@ class User extends Authenticatable
     {
         return $this->hasMany(OrderStatusHistory::class, 'actor_id');
     }
+
+    /**
+     * Karya galeri daur ulang yang diunggah pengguna ini.
+     */
+    public function galleryWorks(): HasMany
+    {
+        return $this->hasMany(GalleryWork::class, 'user_id');
+    }
+
+    /**
+     * Daftar suka karya galeri milik pengguna ini.
+     */
+    public function galleryWorkLikes(): HasMany
+    {
+        return $this->hasMany(GalleryWorkLike::class, 'user_id');
+    }
 }

@@ -143,6 +143,40 @@ class AppServiceProvider extends ServiceProvider
                 ->by('midtrans-webhook:ip:' . $request->ip())
                 ->response($throttleResponse);
         });
+
+        // 9. Rate limiter baca Galeri Karya (publik & karya saya)
+        RateLimiter::for('gallery-read', function (Request $request) use ($throttleResponse) {
+            $key = $request->user('sanctum')?->id
+                ? 'gallery-read:user:' . $request->user('sanctum')->id
+                : 'gallery-read:ip:' . $request->ip();
+
+            return Limit::perMinute(60)
+                ->by($key)
+                ->response($throttleResponse);
+        });
+
+        // 10. Rate limiter tulis Galeri Karya (create / update / delete)
+        RateLimiter::for('gallery-write', function (Request $request) use ($throttleResponse) {
+            $userId = (string) ($request->user()?->id ?: $request->ip());
+
+            return [
+                Limit::perMinute(5)
+                    ->by('gallery-write:user:' . $userId)
+                    ->response($throttleResponse),
+                Limit::perDay(30)
+                    ->by('gallery-write:user:day:' . $userId)
+                    ->response($throttleResponse),
+            ];
+        });
+
+        // 11. Rate limiter toggle like Galeri Karya
+        RateLimiter::for('gallery-like', function (Request $request) use ($throttleResponse) {
+            $userId = (string) ($request->user()?->id ?: $request->ip());
+
+            return Limit::perMinute(30)
+                ->by('gallery-like:user:' . $userId)
+                ->response($throttleResponse);
+        });
     }
 }
 
