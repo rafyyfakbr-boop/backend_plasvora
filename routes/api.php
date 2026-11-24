@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\ActivityController;
 use App\Http\Controllers\Api\AnalysisController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\GalleryWorkController;
 use App\Http\Controllers\Api\HandoverRequestController;
 use App\Http\Controllers\Api\ImpactSummaryController;
 use App\Http\Controllers\Api\MaterialController;
@@ -48,6 +49,15 @@ Route::get('/material-requests/{id}', [MaterialRequestController::class, 'show']
 
 // ─── Impact Summary (publik untuk display) ─────────────────────────────
 Route::get('/impact-summary', [ImpactSummaryController::class, 'index'])->name('impact-summary.index');
+
+// ─── Galeri Karya (read-only publik, optional Sanctum auth untuk liked_by_me) ─
+Route::get('/gallery', [GalleryWorkController::class, 'index'])
+    ->middleware('throttle:gallery-read')
+    ->name('gallery.index');
+Route::get('/gallery/{id}', [GalleryWorkController::class, 'show'])
+    ->middleware('throttle:gallery-read')
+    ->whereNumber('id')
+    ->name('gallery.show');
 
 // ─── Midtrans Payment Webhook (publik, diverifikasi via SHA-512 signature) ─
 Route::post('/webhooks/midtrans', [MidtransWebhookController::class, 'handle'])
@@ -137,4 +147,24 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/orders/{order}/confirm-delivery', [OrderController::class, 'confirmDelivery'])
         ->whereNumber('order')
         ->name('orders.confirm-delivery');
+
+    // ─── Galeri Karya (mutasi & karya milik sendiri) ──────────────────
+    Route::get('/me/gallery', [GalleryWorkController::class, 'myWorks'])
+        ->middleware('throttle:gallery-read')
+        ->name('gallery.my-works');
+    Route::post('/gallery', [GalleryWorkController::class, 'store'])
+        ->middleware('throttle:gallery-write')
+        ->name('gallery.store');
+    Route::patch('/gallery/{id}', [GalleryWorkController::class, 'update'])
+        ->middleware('throttle:gallery-write')
+        ->whereNumber('id')
+        ->name('gallery.update');
+    Route::delete('/gallery/{id}', [GalleryWorkController::class, 'destroy'])
+        ->middleware('throttle:gallery-write')
+        ->whereNumber('id')
+        ->name('gallery.destroy');
+    Route::post('/gallery/{id}/like', [GalleryWorkController::class, 'toggleLike'])
+        ->middleware('throttle:gallery-like')
+        ->whereNumber('id')
+        ->name('gallery.like');
 });
