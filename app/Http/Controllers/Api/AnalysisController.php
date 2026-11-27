@@ -76,7 +76,7 @@ class AnalysisController extends Controller
         $validated = $request->validate([
             'image'             => ['nullable', 'file', 'image', 'mimes:jpeg,png,jpg,webp', 'max:10240'],
             'image_file'        => ['nullable', 'file', 'image', 'mimes:jpeg,png,jpg,webp', 'max:10240'],
-            'declared_category' => ['nullable', Rule::in(['PET', 'HDPE', 'PP', 'LDPE', 'OTHER', 'MIXED'])],
+            'declared_category' => ['nullable', 'string', Rule::in(AnalysisHistory::CATEGORIES)],
             'weight_kg'         => ['nullable', 'numeric', 'min:0.01'],
             'condition'         => ['nullable', Rule::in(['clean', 'slightly_dirty', 'dirty', 'mixed', 'light'])],
             'notes'             => ['nullable', 'string', 'max:1000'],
