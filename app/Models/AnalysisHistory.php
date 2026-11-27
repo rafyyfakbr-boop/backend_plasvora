@@ -10,6 +10,13 @@ class AnalysisHistory extends Model
 {
     use HasFactory;
 
+    /**
+     * Nilai enum kanonik kategori plastik untuk analisis (konsisten dengan DB & MaterialListing).
+     *
+     * @var list<string>
+     */
+    public const CATEGORIES = ['PET', 'HDPE', 'PP', 'LDPE', 'OTHER', 'MIXED'];
+
     protected $fillable = [
         'user_id',
         'declared_category',

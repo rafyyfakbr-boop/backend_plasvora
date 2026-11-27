@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\AnalysisHistory;
 use Exception;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
@@ -31,6 +32,14 @@ class GeminiVisionService
     /** Resolusi maksimum panjang sisi gambar (piksel). */
     protected int $maxImageDimension = 1200;
 
+    /** MIME type gambar yang didukung untuk analisis Gemini Vision. */
+    protected const SUPPORTED_IMAGE_MIMES = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/gif',
+    ];
+
     /** Jumlah maksimum percobaan ulang untuk error transient (503/network). */
     protected int $maxRetries = 3;
 
@@ -53,26 +62,32 @@ class GeminiVisionService
             throw new Exception('Layanan AI belum dikonfigurasi pada server.', 500);
         }
 
-        // Siapkan MIME type dan base64 image data (dengan kompresi jika perlu)
+        // Baca byte gambar mentah (validasi MIME selalu dari byte aktual, bukan header/ekstensi klien)
         if ($image instanceof UploadedFile) {
             $sourcePath = $image->getRealPath();
-            $mimeType   = $image->getMimeType() ?: 'image/jpeg';
+            if ($sourcePath === false || !file_exists($sourcePath)) {
+                throw new Exception('File gambar tidak ditemukan di sistem.', 400);
+            }
         } else {
             if (!file_exists($image)) {
                 throw new Exception('File gambar tidak ditemukan di sistem.', 400);
             }
             $sourcePath = $image;
-            $mimeType   = mime_content_type($image) ?: 'image/jpeg';
         }
 
-        $imageBytes = file_get_contents($sourcePath);
-        if ($imageBytes === false) {
+        $rawBytes = file_get_contents($sourcePath);
+        if ($rawBytes === false || $rawBytes === '') {
             throw new Exception('Gagal membaca file gambar.', 400);
         }
 
-        // Kompres gambar jika ukurannya melebihi batas atau resolusinya terlalu besar
-        $imageBytes = $this->compressImageIfNeeded($imageBytes, $mimeType);
-        $imageB64   = base64_encode($imageBytes);
+        $detectedMime = $this->detectSupportedImageMime($rawBytes);
+
+        // Kompres gambar jika ukurannya melebihi batas atau dimensinya terlalu besar,
+        // selalu kembalikan pasangan [bytes, mime_type] yang sinkron.
+        $processed   = $this->compressImageIfNeeded($rawBytes, $detectedMime);
+        $imageBytes  = $processed['bytes'];
+        $mimeType    = $processed['mime_type'];
+        $imageB64    = base64_encode($imageBytes);
         $imageSizeKb = (int) (strlen($imageBytes) / 1024);
 
         $systemInstruction = <<<TEXT
@@ -210,7 +225,7 @@ TEXT;
                 'detected_object' => ['type' => 'STRING', 'description' => 'Nama objek umum.'],
                 'material_type' => ['type' => 'STRING', 'enum' => ['PLASTIC', 'NON_PLASTIC', 'UNCERTAIN']],
                 'message' => ['type' => 'STRING'],
-                'estimated_category' => ['type' => 'STRING', 'enum' => ['PET', 'HDPE', 'PP', 'LDPE', 'OTHER', 'MIXED']],
+                'estimated_category' => ['type' => 'STRING', 'enum' => AnalysisHistory::CATEGORIES],
                 'material_title' => ['type' => 'STRING'],
                 'polymer_code' => ['type' => 'STRING'],
                 'melting_point' => ['type' => 'STRING'],
@@ -431,79 +446,119 @@ TEXT;
     }
 
     /**
+     * Deteksi MIME type gambar secara otoritatif dari byte aktual (bukan ekstensi/header klien).
+     *
+     * @throws Exception Jika byte bukan gambar valid atau format tidak didukung
+     */
+    protected function detectSupportedImageMime(string $imageBytes): string
+    {
+        $imageInfo = @getimagesizefromstring($imageBytes);
+        $detected  = is_array($imageInfo) && !empty($imageInfo['mime'])
+            ? strtolower(trim((string) $imageInfo['mime']))
+            : null;
+
+        if ($detected === 'image/jpg') {
+            $detected = 'image/jpeg';
+        }
+
+        if ($detected === null || !in_array($detected, self::SUPPORTED_IMAGE_MIMES, true)) {
+            throw new Exception('Format file gambar tidak valid atau tidak didukung. Gunakan format JPEG, PNG, atau WebP.', 422);
+        }
+
+        return $detected;
+    }
+
+    /**
      * Mengompresi gambar jika ukurannya melebihi batas atau dimensinya terlalu besar.
-     * Membutuhkan ekstensi PHP GD.
+     * Selalu mengembalikan pasangan bytes dan mime_type yang sinkron.
      *
      * @param string $imageBytes Data gambar mentah
-     * @param string $mimeType   MIME type gambar
-     * @return string Data gambar (sudah dikompresi atau asli jika tidak perlu)
+     * @param string $mimeType   MIME type aktual hasil deteksi server
+     * @return array{bytes: string, mime_type: string}
+     *
+     * @throws Exception Jika gambar tidak dapat didekode atau dienkode saat kompresi
      */
-    protected function compressImageIfNeeded(string $imageBytes, string $mimeType): string
+    protected function compressImageIfNeeded(string $imageBytes, string $mimeType): array
     {
         $originalSize = strlen($imageBytes);
 
-        // Lewati kompresi jika GD tidak tersedia atau bukan gambar yang didukung
+        // Lewati kompresi jika GD tidak tersedia
         if (!extension_loaded('gd')) {
             Log::warning('GeminiVisionService: Ekstensi GD tidak tersedia, kompresi gambar dilewati.');
-            return $imageBytes;
+            return ['bytes' => $imageBytes, 'mime_type' => $mimeType];
         }
 
-        $supportedMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-        if (!in_array($mimeType, $supportedMimes, true)) {
-            return $imageBytes;
+        if (!in_array($mimeType, self::SUPPORTED_IMAGE_MIMES, true)) {
+            throw new Exception('Format file gambar tidak valid atau tidak didukung. Gunakan format JPEG, PNG, atau WebP.', 422);
+        }
+
+        $imageInfo = @getimagesizefromstring($imageBytes);
+        if (!is_array($imageInfo) || empty($imageInfo[0]) || empty($imageInfo[1])) {
+            throw new Exception('File gambar rusak atau tidak dapat dibaca.', 422);
+        }
+
+        $width            = (int) $imageInfo[0];
+        $height           = (int) $imageInfo[1];
+        $needsResize      = $width > $this->maxImageDimension || $height > $this->maxImageDimension;
+        $needsCompression = $originalSize > $this->maxImageBytes;
+
+        if (!$needsResize && !$needsCompression) {
+            return ['bytes' => $imageBytes, 'mime_type' => $mimeType];
         }
 
         $gdImage = @imagecreatefromstring($imageBytes);
         if ($gdImage === false) {
-            Log::warning('GeminiVisionService: Gagal membuat GD image, kompresi dilewati.');
-            return $imageBytes;
-        }
-
-        $width  = imagesx($gdImage);
-        $height = imagesy($gdImage);
-
-        $needsResize = $width > $this->maxImageDimension || $height > $this->maxImageDimension;
-        $needsCompression = $originalSize > $this->maxImageBytes;
-
-        if (!$needsResize && !$needsCompression) {
-            imagedestroy($gdImage);
-            return $imageBytes;
+            Log::warning('GeminiVisionService: Gagal mendekode gambar dengan GD.', [
+                'mime_type'   => $mimeType,
+                'original_kb' => (int) ($originalSize / 1024),
+            ]);
+            throw new Exception('File gambar rusak atau tidak dapat diproses oleh server.', 422);
         }
 
         // Hitung dimensi baru dengan mempertahankan aspect ratio
         if ($needsResize) {
             $ratio     = min($this->maxImageDimension / $width, $this->maxImageDimension / $height);
-            $newWidth  = (int) ($width * $ratio);
-            $newHeight = (int) ($height * $ratio);
+            $newWidth  = max(1, (int) round($width * $ratio));
+            $newHeight = max(1, (int) round($height * $ratio));
 
             $resized = imagecreatetruecolor($newWidth, $newHeight);
-
-            // Pertahankan transparansi untuk PNG
-            if ($mimeType === 'image/png') {
-                imagealphablending($resized, false);
-                imagesavealpha($resized, true);
-                $transparent = imagecolorallocatealpha($resized, 255, 255, 255, 127);
-                imagefilledrectangle($resized, 0, 0, $newWidth, $newHeight, $transparent);
+            if ($resized === false) {
+                imagedestroy($gdImage);
+                throw new Exception('Gagal memproses ukuran gambar di server.', 500);
             }
+
+            // Kompositkan transparansi (PNG/WebP/GIF) di atas latar putih sebelum encode ke JPEG
+            $white = imagecolorallocate($resized, 255, 255, 255);
+            imagefill($resized, 0, 0, $white);
+            imagealphablending($resized, true);
 
             imagecopyresampled($resized, $gdImage, 0, 0, 0, 0, $newWidth, $newHeight, $width, $height);
             imagedestroy($gdImage);
             $gdImage = $resized;
         }
 
-        // Encode ke JPEG (output selalu JPEG untuk konsistensi ukuran)
+        // Encode ke JPEG (output JPEG -> mime_type wajib diperbarui menjadi image/jpeg)
         ob_start();
-        imagejpeg($gdImage, null, 80);
+        $encoded    = imagejpeg($gdImage, null, 80);
         $compressed = ob_get_clean();
         imagedestroy($gdImage);
 
+        if (!$encoded || !is_string($compressed) || $compressed === '') {
+            throw new Exception('Gagal mengompresi gambar untuk analisis AI.', 500);
+        }
+
         $compressedSize = strlen($compressed);
         Log::info('GeminiVisionService: Image compressed', [
+            'original_mime' => $mimeType,
+            'final_mime'    => 'image/jpeg',
             'original_kb'   => (int) ($originalSize / 1024),
             'compressed_kb' => (int) ($compressedSize / 1024),
         ]);
 
-        return $compressed;
+        return [
+            'bytes'     => $compressed,
+            'mime_type' => 'image/jpeg',
+        ];
     }
 
     /**
@@ -571,7 +626,7 @@ TEXT;
         }
 
         // Kasus 3: Objek plastik valid
-        $allowedCategories = ['PET', 'HDPE', 'PP', 'LDPE', 'OTHER', 'MIXED'];
+        $allowedCategories = AnalysisHistory::CATEGORIES;
 
         $objectName = trim((string) ($data['object_name'] ?? $detectedObj));
         if (empty($objectName) || $objectName === 'Objek Sampah') {

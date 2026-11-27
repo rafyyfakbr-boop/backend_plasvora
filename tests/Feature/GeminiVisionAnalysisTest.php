@@ -1009,4 +1009,183 @@ class GeminiVisionAnalysisTest extends TestCase
         // Verifikasi database tidak menambah record ke-4
         $this->assertEquals(3, AnalysisHistory::where('user_id', $user->id)->count());
     }
+
+    /** @test */
+    public function analysis_accepts_every_canonical_declared_category_and_forwards_it_to_gemini_and_db(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $currentCategory = null;
+        $capturedPrompt = null;
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => function ($request) use (&$currentCategory, &$capturedPrompt) {
+                $capturedPrompt = $request['contents'][0]['parts'][0]['text'] ?? '';
+
+                return Http::response([
+                    'candidates' => [[
+                        'content' => [
+                            'parts' => [[
+                                'text' => json_encode([
+                                    'status'             => 'success',
+                                    'is_plastic'         => true,
+                                    'material_type'      => 'PLASTIC',
+                                    'message'            => 'Berhasil.',
+                                    'object_name'        => "Objek {$currentCategory}",
+                                    'estimated_category' => $currentCategory,
+                                    'material_title'     => "Material {$currentCategory}",
+                                    'polymer_code'       => "Tipe {$currentCategory}",
+                                    'melting_point'      => '130° - 250° C',
+                                    'avoided_emission'   => '~1.8 kg CO₂/kg',
+                                    'qualitative_note'   => "Teridentifikasi {$currentCategory}.",
+                                    'recommendations'    => [[
+                                        'id'                => 'idea_1',
+                                        'title'             => 'Wadah Serbaguna',
+                                        'difficulty'        => 'Tingkat Mudah',
+                                        'description'       => 'Bersihkan dan gunakan kembali.',
+                                        'component_ids'     => ['component_main'],
+                                        'suitable_quantity' => 'single_item',
+                                        'scale'             => 'household',
+                                    ]],
+                                ]),
+                            ]],
+                        ],
+                    ]],
+                ], 200);
+            },
+        ]);
+
+        foreach (AnalysisHistory::CATEGORIES as $category) {
+            $currentCategory = $category;
+            $capturedPrompt = null;
+
+            // Gunakan user berbeda per kategori agar tidak terkena throttle 3/menit
+            $user = User::factory()->create();
+            $file = $this->createDummyJpgFile("sample_{$category}.jpg");
+
+            $response = $this->actingAs($user, 'sanctum')
+                ->post('/api/analyses', [
+                    'image'             => $file,
+                    'declared_category' => $category,
+                    'weight_kg'         => 1.25,
+                    'condition'         => 'clean',
+                ], ['Accept' => 'application/json']);
+
+            $response->assertStatus(201)
+                ->assertJsonPath('data.declared_category', $category)
+                ->assertJsonPath('data.estimated_category', $category);
+
+            $this->assertNotNull($capturedPrompt);
+            $this->assertStringContainsString("Kategori awal yang dipilih pengguna: {$category}", $capturedPrompt);
+            $this->assertDatabaseHas('analysis_histories', [
+                'user_id'            => $user->id,
+                'declared_category'  => $category,
+                'estimated_category' => $category,
+                'is_demo_result'     => 0,
+            ]);
+        }
+    }
+
+    /** @test */
+    public function analysis_rejects_numeric_and_unsupported_declared_categories_with_422(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+        Http::fake();
+
+        foreach (['1', '2', '3', '7', 'PVC', 'INVALID'] as $invalidCategory) {
+            // Gunakan user berbeda agar validasi 422 tidak tertimpa throttle 3/menit
+            $user = User::factory()->create();
+
+            $response = $this->actingAs($user, 'sanctum')
+                ->postJson('/api/analyses', [
+                    'declared_category' => $invalidCategory,
+                    'weight_kg'         => 1.0,
+                    'condition'         => 'clean',
+                ]);
+
+            $response->assertStatus(422)
+                ->assertJsonValidationErrors(['declared_category']);
+        }
+
+        Http::assertNothingSent();
+        $this->assertDatabaseCount('analysis_histories', 0);
+    }
+
+    /** @test */
+    public function analysis_uploads_large_png_and_sends_synchronized_jpeg_bytes_and_mime_to_gemini(): void
+    {
+        Config::set('services.gemini.api_key', 'valid_test_key');
+
+        $img = imagecreatetruecolor(1500, 1000);
+        $bg  = imagecolorallocate($img, 16, 110, 64);
+        imagefilledrectangle($img, 0, 0, 1500, 1000, $bg);
+        $tempPath = tempnam(sys_get_temp_dir(), 'plasvora_large_png_') . '.png';
+        imagepng($img, $tempPath);
+        imagedestroy($img);
+
+        $capturedInline = null;
+
+        Http::fake([
+            'https://generativelanguage.googleapis.com/*' => function ($request) use (&$capturedInline) {
+                $capturedInline = $request['contents'][0]['parts'][1]['inlineData'] ?? null;
+
+                return Http::response([
+                    'candidates' => [[
+                        'content' => [
+                            'parts' => [[
+                                'text' => json_encode([
+                                    'status'             => 'success',
+                                    'is_plastic'         => true,
+                                    'material_type'      => 'PLASTIC',
+                                    'message'            => 'Berhasil.',
+                                    'object_name'        => 'Botol PET Besar',
+                                    'estimated_category' => 'PET',
+                                    'recommendations'    => [[
+                                        'id'                => 'idea_1',
+                                        'title'             => 'Pot Tanaman',
+                                        'difficulty'        => 'Tingkat Mudah',
+                                        'description'       => 'Potong menjadi pot tanaman.',
+                                        'component_ids'     => ['component_main'],
+                                        'suitable_quantity' => 'single_item',
+                                        'scale'             => 'household',
+                                    ]],
+                                ]),
+                            ]],
+                        ],
+                    ]],
+                ], 200);
+            },
+        ]);
+
+        try {
+            $user = User::factory()->create();
+            $file = new UploadedFile($tempPath, 'large_bottle.png', 'image/png', null, true);
+
+            $response = $this->actingAs($user, 'sanctum')
+                ->post('/api/analyses', [
+                    'image'             => $file,
+                    'declared_category' => 'PET',
+                    'weight_kg'         => 1.5,
+                    'condition'         => 'clean',
+                ], ['Accept' => 'application/json']);
+
+            $response->assertStatus(201)
+                ->assertJsonPath('data.declared_category', 'PET')
+                ->assertJsonPath('data.estimated_category', 'PET');
+
+            $this->assertIsArray($capturedInline);
+            $this->assertSame('image/jpeg', $capturedInline['mimeType']);
+            $decoded = base64_decode((string) $capturedInline['data'], true);
+            $this->assertIsString($decoded);
+            $info = @getimagesizefromstring($decoded);
+            $this->assertIsArray($info);
+            $this->assertSame('image/jpeg', $info['mime']);
+            $this->assertLessThanOrEqual(1200, $info[0]);
+            $this->assertLessThanOrEqual(1200, $info[1]);
+        } finally {
+            if (file_exists($tempPath)) {
+                @unlink($tempPath);
+            }
+        }
+    }
 }
